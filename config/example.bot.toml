@@ -1,0 +1,88 @@
+[server]
+port = 3000
+health_path = "/health"
+
+[bots.ops]
+allowed_users = ["ou_ops_operator", "ou_ops_backup"]
+
+[bots.ops.server]
+card_path = "/bots/ops/webhook/card"
+event_path = "/bots/ops/webhook/event"
+
+[bots.ops.storage]
+sqlite_path = "./data/ops.sqlite"
+
+[bots.ops.feishu]
+app_id = "cli_ops_example"
+app_secret = "ops_app_secret"
+verification_token = "ops_verification_token"
+encrypt_key = "ops_encrypt_key"
+
+[bots.ops.tasks.echo-tool]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Echo a short message from a built-in tool."
+tool = "echo"
+timeout_ms = 5000
+cancellable = true
+
+[bots.ops.tasks.echo-tool.parameters.message]
+type = "string"
+required = true
+description = "Message to echo"
+
+[bots.ops.tasks.say-hello]
+runner_kind = "external-command"
+execution_mode = "oneshot"
+description = "Run the host echo command."
+command = "/bin/echo"
+args = ["hello", "{{name}}"]
+timeout_ms = 5000
+cancellable = false
+
+[bots.ops.tasks.say-hello.parameters.name]
+type = "string"
+required = true
+description = "Name to greet"
+
+[bots.support]
+allowed_users = ["ou_support_operator"]
+
+[bots.support.server]
+card_path = "/bots/support/webhook/card"
+event_path = "/bots/support/webhook/event"
+
+[bots.support.storage]
+sqlite_path = "./data/support.sqlite"
+
+[bots.support.feishu]
+app_id = "cli_support_xxx"
+app_secret = "support_secret"
+verification_token = "support_verification_token"
+encrypt_key = "support_encrypt_key"
+
+[bots.support.tasks.echo-tool]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Echo a support message."
+tool = "echo"
+timeout_ms = 5000
+cancellable = true
+
+[bots.support.tasks.echo-tool.parameters.message]
+type = "string"
+required = true
+description = "Support message to echo"
+
+[bots.ops.tasks.cleanup-cache]
+runner_kind = "external-command"
+execution_mode = "cronjob"
+description = "Periodic cache cleanup."
+command = "/bin/echo"
+args = ["cleanup-cache"]
+timeout_ms = 5000
+cancellable = false
+
+[bots.ops.tasks.cleanup-cache.cron]
+schedule = "0 * * * *"
+auto_start = false
