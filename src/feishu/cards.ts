@@ -148,27 +148,63 @@ export function buildTaskListCard(tasks: TaskDefinition[]): CardResponse {
   };
 }
 
-function formatCronJobDetails(task: TaskDefinition, record?: CronJobRecord): string {
-  const summary = record
-    ? `Desired: **${record.desiredState}**\nObserved: **${record.observedState}**`
-    : 'Desired: **stopped**\nObserved: **unknown**';
+function formatCronListDetails(
+  task: TaskDefinition,
+  record?: CronJobRecord,
+  subscribed = false,
+): string {
+  const runtimeState =
+    record?.observedState === 'running'
+      ? 'running'
+      : record?.observedState === 'stopped'
+        ? 'stopped'
+        : 'unknown';
   return (
     `**${task.id}**\n${task.description}\nRunner: ${task.runnerKind}\nSchedule: \`${task.cron?.schedule ?? 'n/a'}\`\n` +
-    `Auto start: **${task.cron?.autoStart ? 'true' : 'false'}**\n${summary}`
+    `Auto start: **${task.cron?.autoStart ? 'true' : 'false'}**\nSubscribed: **${subscribed ? 'true' : 'false'}**\nState: **${runtimeState}**`
   );
 }
 
 export function buildCronTaskListCard(
   tasks: TaskDefinition[],
   records: Record<string, CronJobRecord>,
+  currentChatSubscriptions: Record<string, boolean> = {},
+  title = 'Cron tasks',
 ): CardResponse {
   return {
     type: 'card',
     card: baseCard(
-      'Cron tasks',
+      title,
       tasks
         .filter((task) => task.executionMode === 'cronjob')
-        .map((task) => buildMarkdown(formatCronJobDetails(task, records[task.id]))),
+        .map((task) =>
+          buildMarkdown(
+            formatCronListDetails(task, records[task.id], currentChatSubscriptions[task.id] ?? false),
+          ),
+        ),
+    ),
+  };
+}
+
+function formatCronStatusDetails(task: TaskDefinition, record?: CronJobRecord): string {
+  const observedState = record?.observedState ?? 'unknown';
+  return (
+    `**${task.id}**\n${task.description}\nRunner: ${task.runnerKind}\nSchedule: \`${task.cron?.schedule ?? 'n/a'}\`\n` +
+    `Observed: **${observedState}**`
+  );
+}
+
+export function buildCronStatusCard(
+  tasks: TaskDefinition[],
+  records: Record<string, CronJobRecord>,
+): CardResponse {
+  return {
+    type: 'card',
+    card: baseCard(
+      'Cron status',
+      tasks
+        .filter((task) => task.executionMode === 'cronjob')
+        .map((task) => buildMarkdown(formatCronStatusDetails(task, records[task.id]))),
     ),
   };
 }
@@ -189,13 +225,13 @@ export function buildHelpCard(): CardResponse {
           'List configured cronjob tasks for this bot.',
           '',
           '`/cron start TASK_ID`',
-          'Start a configured cronjob task.',
+          'Subscribe this chat and start a configured cronjob task if needed.',
           '',
           '`/cron stop TASK_ID`',
-          'Stop a configured cronjob task.',
+          'Stop a configured cronjob task globally and clear all subscriptions.',
           '',
           '`/cron status`',
-          'Show current cronjob desired and observed state.',
+          'Show current cronjob observed runtime state.',
           '',
           '`/run-status RUN_ID`',
           'Show the latest persisted state and result summary for a run.',

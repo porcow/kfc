@@ -5,9 +5,15 @@ Feishu-operated task runner for macOS hosts. One process can host multiple bot i
 ## Quick Start
 
 1. Install dependencies: `npm install`
-2. Copy [`config/example.bot.toml`](/Users/porco/Projects/KidsAlfred/config/example.bot.toml) to a local config file and fill in Feishu credentials.
+2. Copy [`config/example.bot.toml`](config/example.bot.toml) to a local config file and fill in Feishu credentials.
 3. Install and start the managed service with `./kfc service install --config /path/to/bot.toml`
 4. For local development, run `KIDS_ALFRED_CONFIG=/path/to/bot.toml npm run dev` to watch `src/` and restart the service automatically on source changes.
+
+Default local paths:
+- Main config defaults to `~/.config/kfc/config.toml`
+- Each bot defaults its working directory to `~/.kfc/`
+- Each bot defaults its SQLite store to `~/.kfc/data/<botId>.sqlite`
+- Relative `sqlite_path` values are resolved against that bot working directory
 
 ## Host Install
 
@@ -22,7 +28,7 @@ The installer:
 - installs the app under `~/.local/share/kfc/app`
 - runs `npm install --omit=dev`
 - writes a user-local `kfc` launcher into `~/.local/bin/kfc`
-- creates `~/.config/kfc/config.toml` from [`config/example.bot.toml`](/Users/porco/Projects/KidsAlfred/config/example.bot.toml) if you do not already have one
+- creates `~/.config/kfc/config.toml` from [`config/example.bot.toml`](config/example.bot.toml) if you do not already have one
 
 Useful installer overrides:
 - `KFC_REF`: branch or ref name to download, default `main`
@@ -60,7 +66,14 @@ The uninstaller removes:
 
 ## Built-In Tools
 
-Built-in task tools live under [`src/tools`](/Users/porco/Projects/KidsAlfred/src/tools). They remain repository-owned task implementations, but runtime execution now routes them through the controlled `kfc exec` child-process boundary so one-shot runs and cronjobs share the same execution model as external commands. Tool code is shared across bots, but each bot chooses which tasks to expose in its own TOML section.
+Built-in task tools live under [`src/tools`](src/tools). They remain repository-owned task implementations, but runtime execution now routes them through the controlled `kfc exec` child-process boundary so one-shot runs and cronjobs share the same execution model as external commands. Tool code is shared across bots, but each bot chooses which tasks to expose in its own TOML section.
+
+The `checkPDWin11` built-in tool is intended for cronjob use. It polls the macOS process list for a Parallels Desktop VM whose command line matches the configured `vm_name_match` value, persists `PDWin11State=off|on` in the bot's SQLite store, and emits proactive Feishu card notifications for these cases:
+- `off -> on`: title `MC 启动!`
+- `on -> off`: title `MC 下线!`
+- `on -> on` after uptime reaches one hour: first reminder immediately, then every 10 minutes while the VM remains on, with titles like `MC 已运行 1小时20分`
+
+Delivery is subscription-driven: chats subscribe with `/cron start TASK_ID`, `/cron stop TASK_ID` clears subscriptions globally, and all notification timestamps are rendered in host-local `YYYY/MM/DD HH:mm:ss` format.
 
 ## Feishu Interaction Flow
 
@@ -69,7 +82,7 @@ Built-in task tools live under [`src/tools`](/Users/porco/Projects/KidsAlfred/sr
 - If your Feishu user is not yet authorized, the bot returns a one-time pairing card with a local admin command in the form `kfc pair BOT_ID-RAND6`.
 - Each task card includes an example `/run TASK_ID key=value ...` command.
 - Send `/run TASK_ID key=value ...` to validate parameters and get an explicit confirmation card for one-shot tasks.
-- Send `/cron list`, `/cron start TASK_ID`, `/cron stop TASK_ID`, or `/cron status` to manage cronjob tasks. `/run` rejects cronjob tasks and `/cron` rejects one-shot tasks.
+- Send `/cron list`, `/cron start TASK_ID`, `/cron stop TASK_ID`, or `/cron status` to manage cronjob tasks. `/cron start TASK_ID` subscribes the current chat and starts the task if needed. `/cron stop TASK_ID` stops the task globally and clears all subscriptions. `/run` rejects cronjob tasks and `/cron` rejects one-shot tasks.
 - Click `Confirm` on the confirmation card to create the run, or `Cancel` to discard the pending request.
 - A successful confirm returns an informational run card immediately in the `queued` state.
 - The bot then pushes milestone run cards back to the originating chat when the run enters `running` and when it reaches a terminal state.
@@ -79,7 +92,7 @@ Built-in task tools live under [`src/tools`](/Users/porco/Projects/KidsAlfred/sr
 
 ## Local CLI
 
-- [`kfc`](/Users/porco/Projects/KidsAlfred/kfc) is the primary local admin entrypoint.
+- [`kfc`](kfc) is the primary local admin entrypoint.
 - `./kfc service install --config /path/to/bot.toml` writes or refreshes `~/Library/LaunchAgents/com.kidsalfred.service.plist`, installs launchd management, and starts the main service immediately.
 - `./kfc service uninstall` stops the managed service if needed and removes `~/Library/LaunchAgents/com.kidsalfred.service.plist`.
 - `./kfc service start` starts an already-installed service.
@@ -102,10 +115,11 @@ Built-in task tools live under [`src/tools`](/Users/porco/Projects/KidsAlfred/sr
 - Cronjob tasks are defined with `execution_mode = "cronjob"` plus a `[...task.cron]` section containing `schedule` and `auto_start`.
 - The service translates configured cron expressions into launchd plist definitions using stable labels in the form `com.kidsalfred.<bot_id>.<task_id>`.
 - Cronjobs execute through `kfc exec --bot BOT_ID --task TASK_ID`, regardless of whether the task runner is `builtin-tool` or `external-command`.
+- Monitoring-style built-in cronjobs such as `checkPDWin11` return structured notification intents; `kfc exec` resolves the correct `BOT_ID`, loads subscribed chats for that task, and fans out delivery through that bot's Feishu credentials.
 - On startup and reload, the service reconciles each configured cronjob against launchd:
   - `auto_start = false` jobs are stopped if they are running.
   - `auto_start = true` jobs are restarted if already running, or started if absent.
-- `/cron list` shows configured cronjob tasks, while `/cron status` shows the persisted desired and observed cronjob state.
+- `/cron list` shows configured cronjob tasks with current-chat subscription state and runtime state, while `/cron status` shows the observed `running/stopped` state only.
 
 ## Run Result Contract
 
@@ -131,4 +145,4 @@ Built-in task tools live under [`src/tools`](/Users/porco/Projects/KidsAlfred/sr
 
 Run `npm test` to execute the local test suite.
 
-The manual Feishu verification checklist is in [docs/manual-verification.md](/Users/porco/Projects/KidsAlfred/docs/manual-verification.md).
+The manual Feishu verification checklist is in [docs/manual-verification.md](docs/manual-verification.md).

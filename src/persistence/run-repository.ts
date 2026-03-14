@@ -4,9 +4,11 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import type {
+  CronChatSubscriptionRecord,
   CronDesiredState,
   CronJobRecord,
   CronObservedState,
+  PDWin11MonitorState,
   PairingRecord,
   RunRecord,
   RunState,
@@ -70,10 +72,34 @@ export class RunRepository {
         last_stopped_at TEXT,
         last_error TEXT
       );
+      CREATE TABLE IF NOT EXISTS cron_chat_subscriptions (
+        task_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (task_id, chat_id)
+      );
+      CREATE TABLE IF NOT EXISTS pd_win11_states (
+        task_id TEXT PRIMARY KEY,
+        state TEXT NOT NULL,
+        detected_start_at TEXT,
+        last_transition_at TEXT NOT NULL,
+        last_notification_at TEXT,
+        last_runtime_reminder_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS ingress_dedup_events (
+        event_key TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_runs_actor_created ON runs(actor_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_pairings_actor_created ON pairings(actor_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_ingress_dedup_expires ON ingress_dedup_events(expires_at);
     `);
     this.ensureRunColumn('origin_chat_id', 'TEXT');
+    this.ensureTableColumn('pd_win11_states', 'last_runtime_reminder_at', 'TEXT');
   }
 
   close(): void {
@@ -416,14 +442,131 @@ export class RunRepository {
       .filter((row): row is CronJobRecord => Boolean(row));
   }
 
+  upsertCronSubscription(
+    taskId: string,
+    chatId: string,
+    actorId: string,
+  ): CronChatSubscriptionRecord {
+    const current = this.getCronSubscription(taskId, chatId);
+    const createdAt = current?.createdAt ?? new Date().toISOString();
+    const updatedAt = new Date().toISOString();
+    this.database
+      .prepare(`
+        INSERT INTO cron_chat_subscriptions (
+          task_id, chat_id, actor_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(task_id, chat_id) DO UPDATE SET
+          actor_id = excluded.actor_id,
+          updated_at = excluded.updated_at
+      `)
+      .run(taskId, chatId, actorId, createdAt, updatedAt);
+    return this.getCronSubscription(taskId, chatId)!;
+  }
+
+  getCronSubscription(taskId: string, chatId: string): CronChatSubscriptionRecord | undefined {
+    const row = this.database
+      .prepare('SELECT * FROM cron_chat_subscriptions WHERE task_id = ? AND chat_id = ?')
+      .get(taskId, chatId) as Record<string, unknown> | undefined;
+    return row ? this.toCronSubscriptionRecord(row) : undefined;
+  }
+
+  listCronSubscriptions(taskId: string): CronChatSubscriptionRecord[] {
+    const rows = this.database
+      .prepare('SELECT * FROM cron_chat_subscriptions WHERE task_id = ? ORDER BY chat_id ASC')
+      .all(taskId) as Record<string, unknown>[];
+    return rows.map((row) => this.toCronSubscriptionRecord(row));
+  }
+
+  isCronChatSubscribed(taskId: string, chatId: string): boolean {
+    return Boolean(this.getCronSubscription(taskId, chatId));
+  }
+
+  clearCronSubscriptions(taskId: string): number {
+    const result = this.database
+      .prepare('DELETE FROM cron_chat_subscriptions WHERE task_id = ?')
+      .run(taskId);
+    return Number(result.changes ?? 0);
+  }
+
+  getPDWin11State(taskId: string): PDWin11MonitorState | undefined {
+    const row = this.database
+      .prepare('SELECT * FROM pd_win11_states WHERE task_id = ?')
+      .get(taskId) as Record<string, unknown> | undefined;
+    if (!row) {
+      return undefined;
+    }
+    return {
+      state: String(row.state) as PDWin11MonitorState['state'],
+      detectedStartAt: row.detected_start_at ? String(row.detected_start_at) : undefined,
+      lastTransitionAt: String(row.last_transition_at),
+      lastNotificationAt: row.last_notification_at ? String(row.last_notification_at) : undefined,
+      lastRuntimeReminderAt: row.last_runtime_reminder_at
+        ? String(row.last_runtime_reminder_at)
+        : undefined,
+    };
+  }
+
+  savePDWin11State(taskId: string, state: PDWin11MonitorState): PDWin11MonitorState {
+    this.database
+      .prepare(`
+        INSERT INTO pd_win11_states (
+          task_id, state, detected_start_at, last_transition_at, last_notification_at, last_runtime_reminder_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(task_id) DO UPDATE SET
+          state = excluded.state,
+          detected_start_at = excluded.detected_start_at,
+          last_transition_at = excluded.last_transition_at,
+          last_notification_at = excluded.last_notification_at,
+          last_runtime_reminder_at = excluded.last_runtime_reminder_at
+      `)
+      .run(
+        taskId,
+        state.state,
+        state.detectedStartAt ?? null,
+        state.lastTransitionAt,
+        state.lastNotificationAt ?? null,
+        state.lastRuntimeReminderAt ?? null,
+      );
+    return this.getPDWin11State(taskId)!;
+  }
+
+  claimIngressEvent(
+    eventKey: string,
+    eventType: string,
+    options: { ttlMs?: number; now?: string } = {},
+  ): boolean {
+    const now = options.now ?? new Date().toISOString();
+    const expiresAt = new Date(Date.now() + (options.ttlMs ?? 15 * 60_000)).toISOString();
+    this.database
+      .prepare('DELETE FROM ingress_dedup_events WHERE expires_at <= ?')
+      .run(now);
+    try {
+      this.database
+        .prepare(
+          'INSERT INTO ingress_dedup_events (event_key, event_type, created_at, expires_at) VALUES (?, ?, ?, ?)',
+        )
+        .run(eventKey, eventType, now, expiresAt);
+      return true;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('UNIQUE')) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   private ensureRunColumn(columnName: string, definition: string): void {
+    this.ensureTableColumn('runs', columnName, definition);
+  }
+
+  private ensureTableColumn(tableName: string, columnName: string, definition: string): void {
     const columns = this.database
-      .prepare('PRAGMA table_info(runs)')
+      .prepare(`PRAGMA table_info(${tableName})`)
       .all() as Array<{ name?: string }>;
     if (columns.some((column) => column.name === columnName)) {
       return;
     }
-    this.database.exec(`ALTER TABLE runs ADD COLUMN ${columnName} ${definition}`);
+    this.database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
   }
 
   private randomSuffix(length: number): string {
@@ -433,5 +576,15 @@ export class RunRepository {
       result += alphabet[randomInt(0, alphabet.length)];
     }
     return result;
+  }
+
+  private toCronSubscriptionRecord(row: Record<string, unknown>): CronChatSubscriptionRecord {
+    return {
+      taskId: String(row.task_id),
+      chatId: String(row.chat_id),
+      actorId: String(row.actor_id),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
   }
 }

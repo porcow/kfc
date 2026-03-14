@@ -48,11 +48,24 @@
 16. Simulate or induce a Feishu push-delivery failure, then confirm `/run-status RUN_ID` still returns the persisted terminal result.
 17. Confirm a failed Feishu milestone push emits a JSON error log with `logType: "feishu_run_update_delivery_failed"` and the affected `runId`.
 18. Send `/cron list` and confirm only cronjob tasks are listed.
-19. Send `/cron start TASK_ID` for a cronjob task and confirm it reports started or already running.
-20. Send `/cron stop TASK_ID` for the same task and confirm it reports stopped or already stopped.
-21. Send `/cron status` and confirm it returns persisted cronjob state for the active bot.
+19. Send `/cron start TASK_ID` for a cronjob task from chat A and confirm the current chat is shown as subscribed and the task reports running or already running without restart churn.
+20. Send `/cron start TASK_ID` for the same task from chat B and confirm both chats can remain subscribed while runtime state stays running.
+21. Send `/cron status` and confirm it returns the observed `running/stopped` state for the active bot without current-chat subscription details.
 22. Send `/run TASK_ID ...` for a cronjob task and confirm the bot replies with a mode-mismatch message directing you to `/cron`.
 23. Send `/cron start TASK_ID` for a one-shot task and confirm the bot replies with a mode-mismatch error.
+24. Subscribe one or more chats to `checkPDWin11` with `/cron start check-pd-win11` and confirm:
+   - no notification is sent while the observed VM remains off
+   - starting the Windows 11 Parallels VM causes exactly one startup notification card per subscribed chat
+   - the startup card title is `MC 启动!`
+   - the startup card includes Windows 11 start time and current runtime in `YYYY/MM/DD HH:mm:ss` / human-readable duration format
+   - before one hour of uptime, subsequent polling while the VM remains on does not send duplicate notifications
+   - once uptime first exceeds one hour, a runtime reminder card is sent with a title like `MC 已运行 1小时`
+   - while the VM remains on after that threshold, additional runtime reminder cards are sent every 10 minutes rather than every poll
+   - stopping the VM causes exactly one shutdown notification card per subscribed chat
+   - the shutdown card title is `MC 下线!`
+   - the shutdown card includes detected shutdown time and cumulative runtime in readable format
+25. Send `/cron stop check-pd-win11` and confirm the task stops globally and clears all subscriptions so later transitions do not fan out until `/cron start` is issued again.
+26. Restart the service after a startup notification but before shutdown, then stop the VM and confirm the persisted monitor state still allows the next polling run to emit the correct shutdown notification.
 
 ## Pairing Checks
 

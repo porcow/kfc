@@ -10,6 +10,7 @@ import { KidsAlfredService, MemoryEventLogSink, MemoryRunUpdateSink } from './se
 function createBotConfig(botId: string, databasePath: string): BotConfig {
   return {
     botId,
+    workingDirectory: '/Users/example/.kfc',
     allowedUsers: ['operator-1'],
     server: {
       cardPath: `/bots/${botId}/webhook/card`,
@@ -115,7 +116,7 @@ async function waitForState(
   runId: string,
   state: string,
 ): Promise<void> {
-  for (let index = 0; index < 40; index += 1) {
+  for (let index = 0; index < 160; index += 1) {
     const card = service.getRunStatus(actorId, runId).card;
     const text = JSON.stringify(card);
     if (text.includes(`"${state}"`) || text.includes(`**${state}**`)) {
@@ -217,16 +218,49 @@ test('service routes cronjob tasks through /cron and rejects mode mismatches', a
   const databasePath = join(directory, 'runs.sqlite');
   const service = new KidsAlfredService(createBotConfig('alpha', databasePath));
 
-  const cronList = await service.handleMessage('operator-1', '/cron list');
+  const cronList = await service.handleMessage('operator-1', '/cron list', { chatId: 'chat-a' });
   const cronListJson = JSON.stringify(cronList.card);
+  assert.ok(cronListJson.includes('Cron tasks'));
   assert.ok(cronListJson.includes('cleanup'));
   assert.ok(!cronListJson.includes('echo'));
+  assert.ok(cronListJson.includes('Subscribed: **false**'));
 
   const runCron = await service.handleMessage('operator-1', '/run cleanup');
   assert.ok(JSON.stringify(runCron.card).includes('/cron'));
 
-  const startCron = await service.handleMessage('operator-1', '/cron start cleanup');
-  assert.ok(JSON.stringify(startCron.card).includes('cleanup'));
+  const startCron = await service.handleMessage('operator-1', '/cron start cleanup', {
+    chatId: 'chat-a',
+  });
+  const startCronJson = JSON.stringify(startCron.card);
+  assert.ok(startCronJson.includes('Cron task started'));
+  assert.ok(!startCronJson.includes('\"content\":\"Cron tasks\"'));
+  assert.ok(startCronJson.includes('cleanup'));
+  assert.ok(startCronJson.includes('Subscribed: **true**'));
+  assert.ok(startCronJson.includes('State: **running**'));
+
+  const duplicateStartCron = await service.handleMessage('operator-1', '/cron start cleanup', {
+    chatId: 'chat-b',
+  });
+  const duplicateStartJson = JSON.stringify(duplicateStartCron.card);
+  assert.ok(duplicateStartJson.includes('Subscribed: **true**'));
+  assert.ok(duplicateStartJson.includes('State: **running**'));
+
+  const cronStatus = await service.handleMessage('operator-1', '/cron status', {
+    chatId: 'chat-a',
+  });
+  const cronStatusJson = JSON.stringify(cronStatus.card);
+  assert.ok(cronStatusJson.includes('cleanup'));
+  assert.ok(cronStatusJson.includes('Observed: **running**'));
+  assert.ok(!cronStatusJson.includes('Subscribed:'));
+
+  const stopCron = await service.handleMessage('operator-1', '/cron stop cleanup', {
+    chatId: 'chat-a',
+  });
+  const stopCronJson = JSON.stringify(stopCron.card);
+  assert.ok(stopCronJson.includes('Cron task stopped'));
+  assert.ok(!stopCronJson.includes('\"content\":\"Cron tasks\"'));
+  assert.ok(stopCronJson.includes('Subscribed: **false**'));
+  assert.ok(stopCronJson.includes('State: **stopped**'));
 
   const startOneshot = await service.handleMessage('operator-1', '/cron start echo');
   assert.ok(JSON.stringify(startOneshot.card).includes('not a cronjob'));

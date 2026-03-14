@@ -59,6 +59,9 @@ test('card action payload also reads nested action form values', () => {
 test('event dispatcher handlers route card.action.trigger through card action handling', async () => {
   const calls: unknown[] = [];
   const service = {
+    getBotId() {
+      return 'alpha';
+    },
     async handleMessage(): Promise<never> {
       throw new Error('message handler should not be used in this test');
     },
@@ -123,6 +126,9 @@ test('event dispatcher handlers route card.action.trigger through card action ha
 test('event dispatcher handlers read actor id from top-level card action event fields', async () => {
   const calls: unknown[] = [];
   const service = {
+    getBotId() {
+      return 'alpha';
+    },
     async handleMessage(): Promise<never> {
       throw new Error('message handler should not be used in this test');
     },
@@ -178,6 +184,131 @@ test('event dispatcher handlers read actor id from top-level card action event f
       },
     },
   ]);
+});
+
+test('event dispatcher handlers suppress duplicate message deliveries', async () => {
+  const handledTexts: string[] = [];
+  const sentCards: string[] = [];
+  const seenKeys = new Set<string>();
+  const service = {
+    getBotId() {
+      return 'alpha';
+    },
+    claimIngressEvent(eventKey: string) {
+      if (seenKeys.has(eventKey)) {
+        return false;
+      }
+      seenKeys.add(eventKey);
+      return true;
+    },
+    async logDuplicateIngress(): Promise<void> {},
+    async handleMessage(_actorId: string, text: string) {
+      handledTexts.push(text);
+      return {
+        type: 'card' as const,
+        card: {
+          header: {
+            title: {
+              tag: 'plain_text',
+              content: `Reply ${text}`,
+            },
+          },
+          elements: [],
+        },
+      };
+    },
+    async handleCardAction(): Promise<never> {
+      throw new Error('card handler should not be used in this test');
+    },
+  };
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async create(request: any): Promise<void> {
+            sentCards.push(request.data.content);
+          },
+        },
+      },
+    },
+  };
+
+  const handlers = createEventDispatcherHandlers(service as any, client as any);
+  const payload = {
+    header: { event_id: 'msg-1:duplicate' },
+    sender: { sender_id: { open_id: 'ou_operator' } },
+    message: { content: JSON.stringify({ text: '/cron list' }), chat_id: 'chat-1' },
+  };
+
+  await handlers['im.message.receive_v1'](payload);
+  await handlers['im.message.receive_v1'](payload);
+
+  assert.deepEqual(handledTexts, ['/cron list']);
+  assert.equal(sentCards.length, 1);
+});
+
+test('event dispatcher handlers suppress duplicate card actions', async () => {
+  const actions: string[] = [];
+  const seenKeys = new Set<string>();
+  const service = {
+    getBotId() {
+      return 'alpha';
+    },
+    claimIngressEvent(eventKey: string) {
+      if (seenKeys.has(eventKey)) {
+        return false;
+      }
+      seenKeys.add(eventKey);
+      return true;
+    },
+    async logDuplicateIngress(): Promise<void> {},
+    async handleMessage(): Promise<never> {
+      throw new Error('message handler should not be used in this test');
+    },
+    async handleCardAction(_actorId: string, action: any) {
+      actions.push(action.confirmationId);
+      return {
+        type: 'card' as const,
+        card: {
+          header: {
+            title: {
+              tag: 'plain_text',
+              content: 'Updated',
+            },
+          },
+          elements: [],
+        },
+      };
+    },
+  };
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async create(): Promise<void> {
+            throw new Error('message client should not be used in this test');
+          },
+        },
+      },
+    },
+  };
+
+  const handlers = createEventDispatcherHandlers(service as any, client as any);
+  const payload = {
+    action: {
+      value: {
+        type: 'confirm_task',
+        confirmationId: 'confirm-1',
+      },
+    },
+  };
+
+  const first = await handlers['card.action.trigger'](payload);
+  const second = await handlers['card.action.trigger'](payload);
+
+  assert.deepEqual(actions, ['confirm-1']);
+  assert.equal((first as any).header.title.content, 'Updated');
+  assert.equal(second, undefined);
 });
 
 test('run status cards normalize long summaries and include canonical fields', () => {

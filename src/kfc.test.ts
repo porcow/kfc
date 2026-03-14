@@ -1,7 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { runKfcCli } from './kfc.ts';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { executeConfiguredTask, runKfcCli } from './kfc.ts';
+import { defaultConfigPath } from './config/paths.ts';
+
+test('defaultConfigPath falls back to ~/.config/kfc/config.toml', () => {
+  const previousConfig = process.env.KIDS_ALFRED_CONFIG;
+  const previousHome = process.env.HOME;
+  delete process.env.KIDS_ALFRED_CONFIG;
+  process.env.HOME = '/Users/example';
+
+  try {
+    assert.equal(defaultConfigPath(), '/Users/example/.config/kfc/config.toml');
+  } finally {
+    if (previousConfig === undefined) {
+      delete process.env.KIDS_ALFRED_CONFIG;
+    } else {
+      process.env.KIDS_ALFRED_CONFIG = previousConfig;
+    }
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});
 
 test('kfc CLI delegates service lifecycle commands', async () => {
   const calls: string[] = [];
@@ -267,4 +294,174 @@ test('kfc CLI reports clear errors for uninstalled service lifecycle operations'
   assert.equal(stopExit, 1);
   assert.equal(errors.length, 3);
   assert.ok(errors.every((entry) => entry.includes('Service is not installed. Run: kfc service install --config /path/to/bot.toml')));
+});
+
+test('executeConfiguredTask fans out bot-scoped notification intents to subscribed chats', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-pd-'));
+  const configPath = join(directory, 'bot.toml');
+  const sqlitePath = join(directory, 'ops.sqlite');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.ops]
+allowed_users = ["local-admin"]
+
+[bots.ops.server]
+card_path = "/bots/ops/webhook/card"
+event_path = "/bots/ops/webhook/event"
+
+[bots.ops.storage]
+sqlite_path = "${sqlitePath}"
+
+[bots.ops.feishu]
+app_id = "ops-app"
+app_secret = "ops-secret"
+
+[bots.ops.tasks.check-pd]
+runner_kind = "builtin-tool"
+execution_mode = "cronjob"
+description = "Check Windows 11"
+tool = "fake-check-pd"
+timeout_ms = 5000
+cancellable = false
+
+[bots.ops.tasks.check-pd.cron]
+schedule = "*/5 * * * *"
+auto_start = true
+`,
+  );
+
+  const { RunRepository } = await import('./persistence/run-repository.ts');
+  const repository = new RunRepository(sqlitePath);
+  repository.upsertCronSubscription('check-pd', 'oc_chat_a', 'operator-a');
+  repository.upsertCronSubscription('check-pd', 'oc_chat_b', 'operator-b');
+  repository.close();
+
+  const deliveries: string[] = [];
+  const result = await executeConfiguredTask(configPath, 'ops', 'check-pd', {
+    builtinTools: new Map([
+      [
+        'fake-check-pd',
+        {
+          id: 'fake-check-pd',
+          async execute() {
+            return {
+              summary: 'observed transition',
+              notifications: [
+                {
+                  channel: 'feishu',
+                  title: 'MC 启动!',
+                  body: 'Windows 11 start time: 2026/03/13 08:00:00',
+                },
+              ],
+            };
+          },
+        },
+      ],
+    ]),
+    sendFeishuNotification: async (bot, notification) => {
+      deliveries.push(`${bot.botId}:${notification.chatId}:${notification.title}:${notification.body}`);
+    },
+  });
+
+  assert.equal(result.summary, 'observed transition');
+  assert.deepEqual(deliveries, [
+    'ops:oc_chat_a:MC 启动!:Windows 11 start time: 2026/03/13 08:00:00',
+    'ops:oc_chat_b:MC 启动!:Windows 11 start time: 2026/03/13 08:00:00',
+  ]);
+});
+
+test('executeConfiguredTask tolerates partial fan-out delivery failures', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-pd-failure-'));
+  const configPath = join(directory, 'bot.toml');
+  const sqlitePath = join(directory, 'ops.sqlite');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.ops]
+allowed_users = ["local-admin"]
+
+[bots.ops.server]
+card_path = "/bots/ops/webhook/card"
+event_path = "/bots/ops/webhook/event"
+
+[bots.ops.storage]
+sqlite_path = "${sqlitePath}"
+
+[bots.ops.feishu]
+app_id = "ops-app"
+app_secret = "ops-secret"
+
+[bots.ops.tasks.check-pd]
+runner_kind = "builtin-tool"
+execution_mode = "cronjob"
+description = "Check Windows 11"
+tool = "fake-check-pd"
+timeout_ms = 5000
+cancellable = false
+
+[bots.ops.tasks.check-pd.cron]
+schedule = "*/5 * * * *"
+auto_start = true
+`,
+  );
+
+  const { RunRepository } = await import('./persistence/run-repository.ts');
+  const repository = new RunRepository(sqlitePath);
+  repository.upsertCronSubscription('check-pd', 'oc_chat_a', 'operator-a');
+  repository.upsertCronSubscription('check-pd', 'oc_chat_b', 'operator-b');
+  repository.close();
+
+  const deliveries: string[] = [];
+  const originalConsoleError = console.error;
+  const errors: string[] = [];
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map((arg) => String(arg)).join(' '));
+  };
+
+  try {
+    const result = await executeConfiguredTask(configPath, 'ops', 'check-pd', {
+      builtinTools: new Map([
+        [
+          'fake-check-pd',
+          {
+            id: 'fake-check-pd',
+            async execute() {
+              return {
+                summary: 'observed transition',
+                notifications: [
+                  {
+                    channel: 'feishu',
+                    title: 'MC 下线!',
+                    body: 'Windows 11 shutdown time: 2026/03/13 08:20:00',
+                  },
+                ],
+              };
+            },
+          },
+        ],
+      ]),
+      sendFeishuNotification: async (bot, notification) => {
+        if (notification.chatId === 'oc_chat_a') {
+          throw new Error('delivery blocked');
+        }
+        deliveries.push(`${bot.botId}:${notification.chatId}:${notification.title}:${notification.body}`);
+      },
+    });
+
+    assert.equal(result.summary, 'observed transition');
+    assert.deepEqual(deliveries, [
+      'ops:oc_chat_b:MC 下线!:Windows 11 shutdown time: 2026/03/13 08:20:00',
+    ]);
+    assert.ok(errors.some((entry) => entry.includes('cron_notification_delivery_failed')));
+    assert.ok(errors.some((entry) => entry.includes('oc_chat_a')));
+  } finally {
+    console.error = originalConsoleError;
+  }
 });

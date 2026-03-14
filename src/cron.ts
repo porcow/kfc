@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
+import { defaultConfigPath } from './config/paths.ts';
 import type { BotConfig, CronJobRecord, CronObservedState, TaskDefinition } from './domain.ts';
 import { RunRepository } from './persistence/run-repository.ts';
 
@@ -15,17 +16,31 @@ export interface CronController {
   reconcile(): Promise<void>;
 }
 
-interface LaunchdAdapter {
+export interface LaunchdAdapter {
   status(label: string): Promise<CronObservedState>;
   start(plistPath: string, label: string): Promise<void>;
   stop(plistPath: string, label: string): Promise<void>;
 }
 
+export function parseLaunchdPrintState(output: string): CronObservedState {
+  const normalized = output.toLowerCase();
+  if (normalized.includes('state = running')) {
+    return 'running';
+  }
+  if (normalized.includes('state = not running')) {
+    return 'stopped';
+  }
+  return 'unknown';
+}
+
 class SystemLaunchdAdapter implements LaunchdAdapter {
   async status(label: string): Promise<CronObservedState> {
     try {
-      await execFileAsync('launchctl', ['list', label]);
-      return 'running';
+      const { stdout } = await execFileAsync('launchctl', [
+        'print',
+        `gui/${process.getuid()}/${label}`,
+      ]);
+      return parseLaunchdPrintState(stdout);
     } catch {
       return 'stopped';
     }
@@ -76,6 +91,20 @@ export class MemoryCronController implements CronController {
 
   async start(taskId: string): Promise<CronJobRecord> {
     const task = this.getCronTask(taskId);
+    const current = this.repository.getCronJob(taskId);
+    if (current?.observedState === 'running') {
+      return this.repository.upsertCronJob({
+        taskId,
+        launchdLabel: buildLaunchdLabel(this.botId, taskId),
+        schedule: task.cron!.schedule,
+        autoStart: task.cron!.autoStart,
+        desiredState: 'started',
+        observedState: 'running',
+        lastStartedAt: current.lastStartedAt,
+        lastStoppedAt: current.lastStoppedAt,
+        lastError: current.lastError,
+      });
+    }
     return this.repository.upsertCronJob({
       taskId,
       launchdLabel: buildLaunchdLabel(this.botId, taskId),
@@ -125,21 +154,24 @@ export class LaunchdCronController implements CronController {
   private readonly config: BotConfig;
   private readonly repository: RunRepository;
   private readonly launchd: LaunchdAdapter;
-  private readonly kfcPath: string;
+  private readonly kfcScriptPath: string;
 
   constructor(
     config: BotConfig,
     repository: RunRepository,
     options: {
       launchd?: LaunchdAdapter;
-      kfcPath?: string;
+      kfcScriptPath?: string;
+      configPath?: string;
     } = {},
   ) {
     this.config = config;
     this.repository = repository;
     this.launchd = options.launchd ?? new SystemLaunchdAdapter();
-    this.kfcPath = options.kfcPath ?? resolve(process.cwd(), 'kfc');
+    this.kfcScriptPath = options.kfcScriptPath ?? resolve(process.cwd(), 'src/kfc.ts');
+    this.configPath = options.configPath ?? config.sourcePath ?? defaultConfigPath();
   }
+  private readonly configPath: string;
 
   async list(): Promise<CronJobRecord[]> {
     const records: CronJobRecord[] = [];
@@ -164,8 +196,12 @@ export class LaunchdCronController implements CronController {
     const task = this.getCronTask(taskId);
     const label = buildLaunchdLabel(this.config.botId, taskId);
     const plistPath = this.writePlist(task);
-    await this.launchd.stop(plistPath, label).catch(() => undefined);
-    await this.launchd.start(plistPath, label);
+    const running = (await this.launchd.status(label)) === 'running';
+    const current = this.repository.getCronJob(taskId);
+    if (!running) {
+      await this.launchd.stop(plistPath, label).catch(() => undefined);
+      await this.launchd.start(plistPath, label);
+    }
     return this.repository.upsertCronJob({
       taskId,
       launchdLabel: label,
@@ -173,7 +209,9 @@ export class LaunchdCronController implements CronController {
       autoStart: task.cron!.autoStart,
       desiredState: 'started',
       observedState: 'running',
-      lastStartedAt: new Date().toISOString(),
+      lastStartedAt: running ? current?.lastStartedAt : new Date().toISOString(),
+      lastStoppedAt: current?.lastStoppedAt,
+      lastError: current?.lastError,
     });
   }
 
@@ -257,8 +295,20 @@ export class LaunchdCronController implements CronController {
       plistPath,
       buildLaunchdPlist({
         label: buildLaunchdLabel(this.config.botId, task.id),
-        programArguments: [this.kfcPath, 'exec', '--bot', this.config.botId, '--task', task.id],
+        programArguments: [
+          process.execPath,
+          '--experimental-strip-types',
+          this.kfcScriptPath,
+          'exec',
+          '--bot',
+          this.config.botId,
+          '--task',
+          task.id,
+        ],
         schedule: task.cron!.schedule,
+        environmentVariables: {
+          KIDS_ALFRED_CONFIG: this.configPath,
+        },
       }),
       'utf8',
     );
@@ -274,6 +324,7 @@ function buildLaunchdPlist(input: {
   label: string;
   programArguments: string[];
   schedule: string;
+  environmentVariables?: Record<string, string>;
 }): string {
   const schedule = translateCronToLaunchd(input.schedule);
   const startCalendarInterval = Array.isArray(schedule) ? schedule : [schedule];
@@ -289,6 +340,15 @@ function buildLaunchdPlist(input: {
   const argumentsXml = input.programArguments
     .map((argument) => `<string>${argument}</string>`)
     .join('\n');
+  const environmentVariablesXml = input.environmentVariables
+    ? `
+    <key>EnvironmentVariables</key>
+    <dict>
+      ${Object.entries(input.environmentVariables)
+        .map(([key, value]) => `<key>${key}</key><string>${value}</string>`)
+        .join('\n      ')}
+    </dict>`
+    : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -299,6 +359,7 @@ function buildLaunchdPlist(input: {
     <array>
       ${argumentsXml}
     </array>
+    ${environmentVariablesXml}
     <key>StartCalendarInterval</key>
     <array>
       ${intervalsXml}

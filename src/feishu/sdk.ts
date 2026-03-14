@@ -124,6 +124,23 @@ interface ReplyClient {
   };
 }
 
+type IngressAwareService = Pick<
+  KidsAlfredService,
+  'handleMessage' | 'handleCardAction' | 'getBotId'
+> &
+  Partial<{
+    claimIngressEvent(eventKey: string, eventType: string): boolean | Promise<boolean>;
+    logDuplicateIngress(entry: {
+      actorId: string;
+      eventType: 'im.message.receive_v1' | 'card.action.trigger';
+      commandType: string;
+      chatId?: string;
+      taskId?: string;
+      runId?: string;
+      confirmationId?: string;
+    }): Promise<void>;
+  }>;
+
 const RECONNECT_WARNING_THRESHOLD = 3;
 
 function stringifyLogMessage(message: unknown): string {
@@ -270,8 +287,76 @@ export class FeishuRunUpdateSink implements RunUpdateSink {
   }
 }
 
+function extractStableEventId(payload: any): string | undefined {
+  const candidates = [
+    payload?.header?.event_id,
+    payload?.event_id,
+    payload?.event?.event_id,
+    payload?.message_id,
+    payload?.message?.message_id,
+  ];
+  return candidates.find((candidate) => typeof candidate === 'string' && candidate.trim());
+}
+
+function detectMessageCommandType(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed === '/help') {
+    return 'help';
+  }
+  if (trimmed === '/tasks') {
+    return 'tasks';
+  }
+  if (trimmed.startsWith('/run ')) {
+    return 'run';
+  }
+  if (trimmed === '/cron list') {
+    return 'cron_list';
+  }
+  if (trimmed === '/cron status') {
+    return 'cron_status';
+  }
+  if (trimmed.startsWith('/cron start ')) {
+    return 'cron_start';
+  }
+  if (trimmed.startsWith('/cron stop ')) {
+    return 'cron_stop';
+  }
+  if (trimmed.startsWith('/run-status ')) {
+    return 'run_status';
+  }
+  if (trimmed.startsWith('/cancel ')) {
+    return 'cancel_run';
+  }
+  if (trimmed === '/reload') {
+    return 'reload';
+  }
+  return 'unknown';
+}
+
+function buildMessageIngressKey(service: Pick<KidsAlfredService, 'getBotId'>, data: any, text: string, actorId: string, chatId: string): string {
+  const stableEventId = extractStableEventId(data);
+  if (stableEventId) {
+    return `im.message.receive_v1:${stableEventId}`;
+  }
+  const messageTimestamp =
+    data?.message?.create_time ??
+    data?.event?.message?.create_time ??
+    data?.create_time ??
+    data?.ts ??
+    '';
+  return `im.message.receive_v1:${service.getBotId()}:${chatId}:${actorId}:${messageTimestamp}:${text}`;
+}
+
+function buildCardActionIngressKey(service: Pick<KidsAlfredService, 'getBotId'>, data: any, actorId: string, action: ReturnType<typeof extractCardActionPayload>): string {
+  const stableEventId = extractStableEventId(data);
+  if (stableEventId) {
+    return `card.action.trigger:${stableEventId}`;
+  }
+  return `card.action.trigger:${service.getBotId()}:${action.confirmationId ?? action.runId ?? action.taskId ?? 'unknown'}:${action.type}:${actorId}`;
+}
+
 export function createEventDispatcherHandlers(
-  service: Pick<KidsAlfredService, 'handleMessage' | 'handleCardAction'>,
+  service: IngressAwareService,
   client: ReplyClient,
 ): Record<string, (data: any) => Promise<unknown>> {
   return {
@@ -279,6 +364,17 @@ export function createEventDispatcherHandlers(
       const actorId = extractActorId(data);
       const text = parseMessageText(data?.message?.content ?? '');
       const chatId = typeof data?.message?.chat_id === 'string' ? data.message.chat_id : '';
+      const commandType = detectMessageCommandType(text);
+      const eventKey = buildMessageIngressKey(service, data, text, actorId, chatId);
+      if (service.claimIngressEvent && !(await service.claimIngressEvent(eventKey, 'im.message.receive_v1'))) {
+        await service.logDuplicateIngress?.({
+          actorId,
+          chatId: chatId || undefined,
+          eventType: 'im.message.receive_v1',
+          commandType,
+        });
+        return;
+      }
       const reply = await service.handleMessage(actorId, text, {
         chatId: chatId || undefined,
       });
@@ -288,6 +384,19 @@ export function createEventDispatcherHandlers(
     },
     'card.action.trigger': async (data: any) => {
       const actorId = extractActorId(data);
+      const action = extractCardActionPayload(data);
+      const eventKey = buildCardActionIngressKey(service, data, actorId, action);
+      if (service.claimIngressEvent && !(await service.claimIngressEvent(eventKey, 'card.action.trigger'))) {
+        await service.logDuplicateIngress?.({
+          actorId,
+          eventType: 'card.action.trigger',
+          commandType: action.type || 'unknown',
+          taskId: action.taskId,
+          runId: action.runId,
+          confirmationId: action.confirmationId,
+        });
+        return undefined;
+      }
       if (!actorId) {
         console.warn(
           JSON.stringify({
@@ -296,7 +405,7 @@ export function createEventDispatcherHandlers(
           }),
         );
       }
-      const response = await service.handleCardAction(actorId, extractCardActionPayload(data));
+      const response = await service.handleCardAction(actorId, action);
       return response.card;
     },
   };
@@ -372,7 +481,20 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
     },
     async (event: any) => {
       const actorId = extractActorId(event);
-      const response = await service.handleCardAction(actorId, extractCardActionPayload(event));
+      const action = extractCardActionPayload(event);
+      const eventKey = buildCardActionIngressKey(service, event, actorId, action);
+      if (!(await service.claimIngressEvent(eventKey, 'card.action.trigger'))) {
+        await service.logDuplicateIngress({
+          actorId,
+          eventType: 'card.action.trigger',
+          commandType: action.type || 'unknown',
+          taskId: action.taskId,
+          runId: action.runId,
+          confirmationId: action.confirmationId,
+        });
+        return undefined;
+      }
+      const response = await service.handleCardAction(actorId, action);
       return response.card;
     },
   );

@@ -170,3 +170,141 @@ test('validateParameters enforces required parameters and types', async () => {
     /Unknown parameter/,
   );
 });
+
+test('loadConfig applies checkPDWin11 defaults without requiring a fixed notification target', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-pd-'));
+  const validConfigPath = join(directory, 'valid.toml');
+  await writeFile(
+    validConfigPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.storage]
+sqlite_path = "./data/alpha.sqlite"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.check-pd]
+runner_kind = "builtin-tool"
+execution_mode = "cronjob"
+description = "Check PD Windows 11"
+tool = "checkPDWin11"
+timeout_ms = 5000
+cancellable = false
+
+[bots.alpha.tasks.check-pd.cron]
+schedule = "*/5 * * * *"
+auto_start = true
+`,
+  );
+
+  const validConfig = await loadConfig(validConfigPath);
+  assert.equal(validConfig.bots.alpha.tasks['check-pd'].runnerKind, 'builtin-tool');
+  assert.equal(
+    validConfig.bots.alpha.tasks['check-pd'].config?.vm_name_match,
+    'Windows 11',
+  );
+});
+
+test('loadConfig defaults bot working directory to ~/.kfc and sqlite path to ~/.kfc/data/{botId}.sqlite', async () => {
+  const previousHome = process.env.HOME;
+  process.env.HOME = '/Users/example';
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-defaults-'));
+  const configPath = join(directory, 'config.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.echo]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Builtin echo"
+tool = "echo"
+timeout_ms = 5000
+cancellable = true
+`,
+  );
+
+  try {
+    const config = await loadConfig(configPath);
+    assert.equal(config.bots.alpha.workingDirectory, '/Users/example/.kfc');
+    assert.equal(config.bots.alpha.storage.sqlitePath, '/Users/example/.kfc/data/alpha.sqlite');
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});
+
+test('loadConfig resolves relative sqlite paths against the bot working directory', async () => {
+  const previousHome = process.env.HOME;
+  process.env.HOME = '/Users/example';
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-relative-sqlite-'));
+  const configPath = join(directory, 'config.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.storage]
+sqlite_path = "./data/custom.sqlite"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.echo]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Builtin echo"
+tool = "echo"
+timeout_ms = 5000
+cancellable = true
+`,
+  );
+
+  try {
+    const config = await loadConfig(configPath);
+    assert.equal(config.bots.alpha.workingDirectory, '/Users/example/.kfc');
+    assert.equal(config.bots.alpha.storage.sqlitePath, '/Users/example/.kfc/data/custom.sqlite');
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});

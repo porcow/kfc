@@ -1,6 +1,7 @@
 export type RunnerKind = 'builtin-tool' | 'external-command';
 export type ExecutionMode = 'oneshot' | 'cronjob';
 export type ParameterType = 'string' | 'number' | 'boolean';
+export type ToolConfigValue = string | number | boolean;
 export type RouteKind = 'card' | 'event';
 export type WebSocketState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 export type RunState =
@@ -34,6 +35,7 @@ interface TaskDefinitionBase {
 export interface BuiltinToolTaskDefinition extends TaskDefinitionBase {
   runnerKind: 'builtin-tool';
   tool: string;
+  config?: Record<string, ToolConfigValue>;
 }
 
 export interface ExternalCommandTaskDefinition extends TaskDefinitionBase {
@@ -56,6 +58,8 @@ export interface GlobalServerConfig {
 
 export interface BotConfig {
   botId: string;
+  sourcePath?: string;
+  workingDirectory: string;
   allowedUsers: string[];
   server: {
     cardPath: string;
@@ -124,6 +128,27 @@ export interface TaskResult {
   stderr?: string;
   exitCode?: number;
   data?: Record<string, unknown>;
+  notifications?: TaskNotificationIntent[];
+}
+
+export interface TaskNotificationIntent {
+  channel: 'feishu';
+  chatId?: string;
+  title?: string;
+  body: string;
+}
+
+export interface PDWin11MonitorState {
+  state: 'off' | 'on';
+  detectedStartAt?: string;
+  lastTransitionAt: string;
+  lastNotificationAt?: string;
+  lastRuntimeReminderAt?: string;
+}
+
+export interface PDWin11MonitorStateStore {
+  getPDWin11State(taskId: string): PDWin11MonitorState | undefined;
+  savePDWin11State(taskId: string, state: PDWin11MonitorState): PDWin11MonitorState;
 }
 
 export interface TaskRunContext {
@@ -131,7 +156,9 @@ export interface TaskRunContext {
   signal: AbortSignal;
   task: TaskDefinition;
   actorId: string;
+  botId?: string;
   parameters: Record<string, string | number | boolean>;
+  pdWin11StateStore?: PDWin11MonitorStateStore;
 }
 
 export interface TaskTool {
@@ -167,6 +194,14 @@ export interface CronJobRecord {
   lastStartedAt?: string;
   lastStoppedAt?: string;
   lastError?: string;
+}
+
+export interface CronChatSubscriptionRecord {
+  taskId: string;
+  chatId: string;
+  actorId: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface EventLogEntry {

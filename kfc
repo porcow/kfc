@@ -1,3 +1,8 @@
 #!/usr/bin/env -S node --experimental-strip-types
 
-import './src/kfc.ts';
+import process from 'node:process';
+
+import { runKfcCli } from './src/kfc.ts';
+
+const exitCode = await runKfcCli(process.argv.slice(2));
+process.exit(exitCode);

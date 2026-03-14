@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node --experimental-strip-types src/index.ts",
     "dev": "node --watch-path=src --experimental-strip-types src/index.ts",
-    "test": "node --experimental-strip-types --test src/*.test.ts src/config/*.test.ts"
+    "test": "node --experimental-strip-types --test src/*.test.ts src/**/*.test.ts"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.55.0"

@@ -1,9 +1,8 @@
-import { resolve } from 'node:path';
-
 import { BotManager } from './bot-manager.ts';
+import { defaultConfigPath } from './config/paths.ts';
 import { createAppServer } from './http/server.ts';
 
-const configPath = resolve(process.env.KIDS_ALFRED_CONFIG ?? './config/example.bot.toml');
+const configPath = defaultConfigPath();
 
 const manager = await BotManager.create(configPath);
 const server = await createAppServer(manager);

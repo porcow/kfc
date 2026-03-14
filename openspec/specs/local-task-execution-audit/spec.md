@@ -146,12 +146,18 @@ The system SHALL persist cronjob management state independently from one-shot ru
 
 #### Scenario: Cronjob state remains queryable after restart
 - **WHEN** the service restarts after recording cronjob desired and observed state for a configured cronjob task
-- **THEN** `/cron status` can still return that task's last known state after restart
+- **THEN** `/cron status` can still return that task's last known runtime state after restart
 
 #### Scenario: One-shot and cronjob state do not share identifiers
 - **WHEN** the system stores one-shot runs and cronjob task state for the same bot
 - **THEN** one-shot audit records remain keyed by `run_id`
 - **AND** cronjob state remains keyed by `task_id`
+
+#### Scenario: Cron chat subscriptions are persisted separately from runtime state
+- **WHEN** the system stores cron runtime state and chat subscriptions for the same cronjob task
+- **THEN** runtime state remains keyed by `(bot_id, task_id)`
+- **AND** subscription state remains keyed by `(bot_id, task_id, chat_id)`
+- **AND** removing subscriptions does not by itself erase the persisted runtime state record
 
 ### Requirement: `kfc` is the controlled local execution and lifecycle interface
 The system SHALL provide a unified local CLI named `kfc` for service lifecycle, pairing, and controlled direct task execution.
@@ -212,6 +218,59 @@ The system SHALL reconcile configured cronjob tasks against `launchctl` state on
 - **WHEN** a local administrator executes `kfc service stop`
 - **THEN** the system stops the main service process
 - **AND** it does not rewrite the configured `auto_start` policy for cronjob tasks
+
+### Requirement: Monitoring-style cron tasks deliver through subscriptions rather than fixed destinations
+The system SHALL allow monitoring-style cron tasks to emit proactive notification payloads without declaring a fixed `notification_chat_id` in TOML, and SHALL let the outer execution layer resolve subscribed chats at delivery time.
+
+#### Scenario: Monitor task configuration omits fixed notification destination
+- **WHEN** a monitoring-style cron task is configured without a fixed `notification_chat_id`
+- **THEN** the system accepts that task configuration
+- **AND** the task remains eligible for proactive notification delivery through subscribed chats
+
+#### Scenario: Outer execution layer resolves subscribed chats for delivery
+- **WHEN** a monitoring-style cron task emits a proactive notification payload during `kfc exec --bot BOT_ID --task TASK_ID`
+- **THEN** the outer execution layer resolves the subscribed chats for that `(BOT_ID, TASK_ID)`
+- **AND** it fans out delivery using that bot's Feishu credentials
+
+#### Scenario: Cron start on an already running job is idempotent for runtime state
+- **WHEN** `/cron start TASK_ID` is issued for a cronjob task whose launchd job is already running
+- **THEN** the system keeps the task in the running state
+- **AND** it does not restart the launchd job solely because of the duplicate start request
+- **AND** it may still upsert the current chat's subscription membership
+
+### Requirement: Ingress dedup is stored durably per bot
+The system SHALL persist ingress dedup keys in the bot-scoped SQLite store so duplicate delivery suppression does not depend on process memory.
+
+#### Scenario: Duplicate delivery after a short reconnect is still suppressed
+- **WHEN** a duplicate Feishu event arrives after the process has already recorded the original event within the configured dedup window
+- **THEN** the system suppresses the duplicate based on the persisted ingress dedup store
+
+### Requirement: Duplicate suppressions are audit logged
+The system SHALL log when a duplicate ingress event is intentionally suppressed.
+
+#### Scenario: Duplicate suppression is written to the event log
+- **WHEN** a duplicate message or card action is suppressed
+- **THEN** the system records a structured event-log entry with decision `duplicate_suppressed`
+- **AND** the log includes the inbound event type and command or action classification when available
+
+### Requirement: Built-in tool notification intents support titled proactive cards
+The system SHALL allow built-in tools to return proactive notification intents that include both a card title and body content so the outer runner can render informational Feishu cards without tool-local SDK ownership.
+
+#### Scenario: Built-in tool returns a titled proactive notification
+- **WHEN** a built-in tool produces a proactive Feishu notification intent
+- **THEN** the notification contract includes a title field and body field
+- **AND** the outer runner can deliver that notification without inferring the title from free-form text
+
+### Requirement: Durable monitor state tracks runtime reminder timing
+The system SHALL persist the reminder timing metadata required by monitor-style built-in tools to suppress duplicate runtime reminders across cron invocations and process restarts.
+
+#### Scenario: Runtime reminder timestamp is persisted
+- **WHEN** `checkPDWin11` emits a runtime reminder notification
+- **THEN** the persisted monitor-state record stores the reminder send time
+
+#### Scenario: Missing reminder metadata is treated as no prior reminder
+- **WHEN** a previously persisted monitor-state row predates the runtime-reminder feature and lacks runtime-reminder timing metadata
+- **THEN** the next `checkPDWin11` invocation treats that row as having no prior runtime reminder recorded
 
 ### Requirement: Inbound Feishu interactions are logged as structured decisions
 The system SHALL emit a structured audit log entry for each supported inbound Feishu message or card action that reaches bot business logic, including rejected and invalid requests.

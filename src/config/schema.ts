@@ -1,3 +1,4 @@
+import { isAbsolute, join, resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
 import type {
@@ -11,7 +12,9 @@ import type {
   ParameterDefinition,
   RunnerKind,
   TaskDefinition,
+  ToolConfigValue,
 } from '../domain.ts';
+import { defaultBotWorkingDirectory } from './paths.ts';
 import { parseToml } from './toml.ts';
 
 function expectObject(value: unknown, path: string): Record<string, unknown> {
@@ -47,6 +50,20 @@ function expectStringArray(value: unknown, path: string): string[] {
     throw new Error(`Expected string array at ${path}`);
   }
   return value as string[];
+}
+
+function parseToolConfig(input: unknown, path: string): Record<string, ToolConfigValue> {
+  const object = expectObject(input ?? {}, path);
+  const config: Record<string, ToolConfigValue> = {};
+
+  for (const [key, value] of Object.entries(object)) {
+    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+      throw new Error(`Expected string, number, or boolean at ${path}.${key}`);
+    }
+    config[key] = value;
+  }
+
+  return config;
 }
 
 function parseParameterDefinitions(input: unknown, path: string): Record<string, ParameterDefinition> {
@@ -113,9 +130,16 @@ function parseTask(taskId: string, input: unknown, pathPrefix: string): TaskDefi
   }
 
   if (runnerKind === 'builtin-tool') {
+    const config = parseToolConfig(task.config, `${pathPrefix}.${taskId}.config`);
+    if (task.tool === 'checkPDWin11') {
+      if (!('vm_name_match' in config)) {
+        config.vm_name_match = 'Windows 11';
+      }
+    }
     return {
       ...base,
       tool: expectString(task.tool, `${pathPrefix}.${taskId}.tool`),
+      config,
     } satisfies BuiltinToolTaskDefinition;
   }
 
@@ -154,12 +178,31 @@ function parseGlobalServer(input: unknown): GlobalServerConfig {
   };
 }
 
+function resolveBotWorkingDirectory(value: unknown, path: string): string {
+  if (value === undefined) {
+    return defaultBotWorkingDirectory();
+  }
+  const workingDirectory = expectString(value, path);
+  return isAbsolute(workingDirectory)
+    ? workingDirectory
+    : resolve(defaultBotWorkingDirectory(), workingDirectory);
+}
+
+function resolveBotSqlitePath(value: unknown, path: string, botId: string, workingDirectory: string): string {
+  if (value === undefined) {
+    return join(workingDirectory, 'data', `${botId}.sqlite`);
+  }
+  const sqlitePath = expectString(value, path);
+  return isAbsolute(sqlitePath) ? sqlitePath : resolve(workingDirectory, sqlitePath);
+}
+
 function parseBotConfig(botId: string, input: unknown, loadedAt: string): BotConfig {
   const bot = expectObject(input, `bots.${botId}`);
   const server = expectObject(bot.server ?? {}, `bots.${botId}.server`);
   const storage = expectObject(bot.storage ?? {}, `bots.${botId}.storage`);
   const feishu = expectObject(bot.feishu ?? {}, `bots.${botId}.feishu`);
   const rawTasks = expectObject(bot.tasks ?? {}, `bots.${botId}.tasks`);
+  const workingDirectory = resolveBotWorkingDirectory(bot.working_directory, `bots.${botId}.working_directory`);
   const tasks: Record<string, TaskDefinition> = {};
   for (const [taskId, taskValue] of Object.entries(rawTasks)) {
     tasks[taskId] = parseTask(taskId, taskValue, `bots.${botId}.tasks`);
@@ -168,6 +211,7 @@ function parseBotConfig(botId: string, input: unknown, loadedAt: string): BotCon
   return {
     botId,
     allowedUsers: expectStringArray(bot.allowed_users ?? [], `bots.${botId}.allowed_users`),
+    workingDirectory,
     server: {
       cardPath: expectString(
         server.card_path ?? `/bots/${botId}/webhook/card`,
@@ -179,9 +223,11 @@ function parseBotConfig(botId: string, input: unknown, loadedAt: string): BotCon
       ),
     },
     storage: {
-      sqlitePath: expectString(
-        storage.sqlite_path ?? `./data/${botId}.sqlite`,
+      sqlitePath: resolveBotSqlitePath(
+        storage.sqlite_path,
         `bots.${botId}.storage.sqlite_path`,
+        botId,
+        workingDirectory,
       ),
     },
     feishu: {
@@ -214,6 +260,7 @@ export async function loadConfig(configPath: string): Promise<AppConfig> {
   const bots: Record<string, BotConfig> = {};
   for (const [botId, botValue] of Object.entries(botsObject)) {
     bots[botId] = parseBotConfig(botId, botValue, loadedAt);
+    bots[botId].sourcePath = configPath;
   }
 
   validateUniquePaths(bots, (bot) => bot.server.cardPath, 'card_path');

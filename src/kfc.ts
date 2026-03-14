@@ -4,11 +4,14 @@ import { constants } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import process from 'node:process';
+import * as sdk from '@larksuiteoapi/node-sdk';
 
+import { defaultConfigPath } from './config/paths.ts';
 import { loadConfig, validateParameters } from './config/schema.ts';
-import type { TaskDefinition, TaskResult } from './domain.ts';
+import type { BotConfig, TaskDefinition, TaskNotificationIntent, TaskResult, TaskTool } from './domain.ts';
 import { authorizePairing, invokeLocalReload } from './pairing.ts';
 import { createBuiltinToolRegistry } from './tools/index.ts';
+import { RunRepository } from './persistence/run-repository.ts';
 
 const execFileAsync = promisify(execFile);
 const SERVICE_LABEL = 'com.kidsalfred.service';
@@ -28,6 +31,14 @@ export interface KfcCliDeps {
   taskExecutor: (botId: string, taskId: string) => Promise<TaskResult>;
   stdout: { write(value: string): void };
   stderr: { write(value: string): void };
+}
+
+interface ExecuteConfiguredTaskOptions {
+  builtinTools?: Map<string, TaskTool>;
+  sendFeishuNotification?: (
+    bot: BotConfig,
+    notification: TaskNotificationIntent,
+  ) => Promise<void>;
 }
 
 class LaunchdServiceManager implements KfcServiceManager {
@@ -144,9 +155,17 @@ export async function executeTaskDefinition(
   parameters: Record<string, string | number | boolean>,
   actorId = 'local-admin',
   runId = `kfc_${task.id}`,
+  options: {
+    botId?: string;
+    pdWin11StateStore?: {
+      getPDWin11State(taskId: string): unknown;
+      savePDWin11State(taskId: string, state: unknown): unknown;
+    };
+    builtinTools?: Map<string, TaskTool>;
+  } = {},
 ): Promise<TaskResult> {
   if (task.runnerKind === 'builtin-tool') {
-    const tool = createBuiltinToolRegistry().get(task.tool);
+    const tool = (options.builtinTools ?? createBuiltinToolRegistry()).get(task.tool);
     if (!tool) {
       throw new Error(`Builtin tool not found: ${task.tool}`);
     }
@@ -155,7 +174,9 @@ export async function executeTaskDefinition(
       signal: new AbortController().signal,
       task,
       actorId,
+      botId: options.botId,
       parameters,
+      pdWin11StateStore: options.pdWin11StateStore,
     });
   }
 
@@ -166,6 +187,7 @@ export async function executeConfiguredTask(
   configPath: string,
   botId: string,
   taskId: string,
+  options: ExecuteConfiguredTaskOptions = {},
 ): Promise<TaskResult> {
   const config = await loadConfig(configPath);
   const bot = config.bots[botId];
@@ -178,7 +200,109 @@ export async function executeConfiguredTask(
   }
 
   const parameters = resolveDefaultParameters(task);
-  return await executeTaskDefinition(task, parameters, 'local-admin', `kfc_${taskId}`);
+  const repository = new RunRepository(bot.storage.sqlitePath);
+  try {
+    const result = await executeTaskDefinition(task, parameters, 'local-admin', `kfc_${taskId}`, {
+      botId,
+      pdWin11StateStore: repository,
+      builtinTools: options.builtinTools,
+    });
+    for (const notification of result.notifications ?? []) {
+      if (notification.chatId) {
+        await deliverNotificationToChat(
+          bot,
+          notification,
+          notification.chatId,
+          options.sendFeishuNotification,
+        );
+        continue;
+      }
+
+      const subscriptions = repository.listCronSubscriptions(taskId);
+      for (const subscription of subscriptions) {
+        await deliverNotificationToChat(
+          bot,
+          notification,
+          subscription.chatId,
+          options.sendFeishuNotification,
+        ).catch((error) => {
+          console.error(
+            JSON.stringify({
+              logType: 'cron_notification_delivery_failed',
+              botId: bot.botId,
+              taskId,
+              chatId: subscription.chatId,
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        });
+      }
+    }
+    return result;
+  } finally {
+    repository.close();
+  }
+}
+
+async function deliverNotificationToChat(
+  bot: BotConfig,
+  notification: TaskNotificationIntent,
+  chatId: string,
+  sender: ExecuteConfiguredTaskOptions['sendFeishuNotification'],
+): Promise<void> {
+  await (sender ?? sendFeishuNotification)(bot, {
+    ...notification,
+    chatId,
+  });
+}
+
+async function sendFeishuNotification(
+  bot: BotConfig,
+  notification: TaskNotificationIntent,
+): Promise<void> {
+  if (notification.channel !== 'feishu') {
+    return;
+  }
+  if (!notification.chatId) {
+    throw new Error('chatId is required for Feishu notification delivery');
+  }
+
+  const client = new sdk.Client({
+    appId: bot.feishu.appId,
+    appSecret: bot.feishu.appSecret,
+  });
+
+  await client.im.v1.message.create({
+    params: {
+      receive_id_type: 'chat_id',
+    },
+    data: {
+      receive_id: notification.chatId,
+      content: JSON.stringify(buildNotificationCard(notification)),
+      msg_type: 'interactive',
+    },
+  });
+}
+
+function buildNotificationCard(notification: TaskNotificationIntent): Record<string, unknown> {
+  return {
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      template: 'blue',
+      title: {
+        tag: 'plain_text',
+        content: notification.title ?? 'Notification',
+      },
+    },
+    elements: [
+      {
+        tag: 'markdown',
+        content: notification.body,
+      },
+    ],
+  };
 }
 
 async function writeServicePlist(configPath: string): Promise<string> {
@@ -232,10 +356,6 @@ async function ensureInstalledService(): Promise<string> {
     throw new Error(SERVICE_INSTALL_HINT);
   }
   return plistPath;
-}
-
-function defaultConfigPath(): string {
-  return resolve(process.env.KIDS_ALFRED_CONFIG ?? './config/example.bot.toml');
 }
 
 function createDefaultDeps(): KfcCliDeps {

@@ -12,6 +12,7 @@ import {
   buildAuthorizationCard,
   buildCancellationCard,
   buildConfirmationCard,
+  buildCronStatusCard,
   buildCronTaskListCard,
   buildErrorCard,
   buildHelpCard,
@@ -185,6 +186,25 @@ export class KidsAlfredService {
     return this.botId;
   }
 
+  claimIngressEvent(eventKey: string, eventType: string): boolean {
+    return this.repository.claimIngressEvent(eventKey, eventType);
+  }
+
+  async logDuplicateIngress(entry: {
+    actorId: string;
+    eventType: EventLogEntry['eventType'];
+    commandType: string;
+    chatId?: string;
+    taskId?: string;
+    runId?: string;
+    confirmationId?: string;
+  }): Promise<void> {
+    await this.logEvent({
+      ...entry,
+      decision: 'duplicate_suppressed',
+    });
+  }
+
   attachRunUpdateSink(sink: RunUpdateSink): void {
     this.updates.addSink(sink);
   }
@@ -223,10 +243,32 @@ export class KidsAlfredService {
     return buildTaskListCard(Object.values(this.config.tasks));
   }
 
-  async listCronTasks(actorId: string): Promise<CardResponse> {
+  async listCronTasks(
+    actorId: string,
+    currentChatId?: string,
+    title = 'Cron tasks',
+  ): Promise<CardResponse> {
     this.ensureAuthorized(actorId);
     const records = await this.cronController.list();
+    const currentChatSubscriptions = currentChatId
+      ? Object.fromEntries(
+          Object.values(this.config.tasks)
+            .filter((task) => task.executionMode === 'cronjob')
+            .map((task) => [task.id, this.repository.isCronChatSubscribed(task.id, currentChatId)]),
+        )
+      : {};
     return buildCronTaskListCard(
+      Object.values(this.config.tasks),
+      Object.fromEntries(records.map((record) => [record.taskId, record])),
+      currentChatSubscriptions,
+      title,
+    );
+  }
+
+  async getCronStatus(actorId: string): Promise<CardResponse> {
+    this.ensureAuthorized(actorId);
+    const records = await this.cronController.list();
+    return buildCronStatusCard(
       Object.values(this.config.tasks),
       Object.fromEntries(records.map((record) => [record.taskId, record])),
     );
@@ -381,7 +423,10 @@ export class KidsAlfredService {
         return response;
       }
       if (trimmed === '/cron list' || trimmed === '/cron status') {
-        const response = await this.listCronTasks(actorId);
+        const response =
+          trimmed === '/cron list'
+            ? await this.listCronTasks(actorId, context.chatId)
+            : await this.getCronStatus(actorId);
         await this.logEvent({
           actorId,
           chatId: context.chatId,
@@ -419,7 +464,7 @@ export class KidsAlfredService {
       }
       if (trimmed.startsWith('/cron start ')) {
         const taskId = trimmed.replace('/cron start ', '').trim();
-        const response = await this.startCronTask(actorId, taskId);
+        const response = await this.startCronTask(actorId, taskId, context.chatId);
         await this.logEvent({
           actorId,
           chatId: context.chatId,
@@ -432,7 +477,7 @@ export class KidsAlfredService {
       }
       if (trimmed.startsWith('/cron stop ')) {
         const taskId = trimmed.replace('/cron stop ', '').trim();
-        const response = await this.stopCronTask(actorId, taskId);
+        const response = await this.stopCronTask(actorId, taskId, context.chatId);
         await this.logEvent({
           actorId,
           chatId: context.chatId,
@@ -638,24 +683,37 @@ export class KidsAlfredService {
     return task;
   }
 
-  private async startCronTask(actorId: string, taskId: string): Promise<CardResponse> {
+  private async startCronTask(
+    actorId: string,
+    taskId: string,
+    chatId?: string,
+  ): Promise<CardResponse> {
     this.ensureAuthorized(actorId);
     const task = this.getTask(taskId);
     if (task.executionMode !== 'cronjob') {
       throw new Error(`Task mode mismatch: ${taskId} is not a cronjob task`);
     }
+    if (!chatId?.trim()) {
+      throw new Error('Chat context is required for /cron start');
+    }
+    this.repository.upsertCronSubscription(taskId, chatId, actorId);
     await this.cronController.start(taskId);
-    return await this.listCronTasks(actorId);
+    return await this.listCronTasks(actorId, chatId, 'Cron task started');
   }
 
-  private async stopCronTask(actorId: string, taskId: string): Promise<CardResponse> {
+  private async stopCronTask(
+    actorId: string,
+    taskId: string,
+    chatId?: string,
+  ): Promise<CardResponse> {
     this.ensureAuthorized(actorId);
     const task = this.getTask(taskId);
     if (task.executionMode !== 'cronjob') {
       throw new Error(`Task mode mismatch: ${taskId} is not a cronjob task`);
     }
     await this.cronController.stop(taskId);
-    return await this.listCronTasks(actorId);
+    this.repository.clearCronSubscriptions(taskId);
+    return await this.listCronTasks(actorId, chatId, 'Cron task stopped');
   }
 
   private detectMessageCommandType(text: string): string {

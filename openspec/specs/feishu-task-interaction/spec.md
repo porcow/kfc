@@ -114,21 +114,53 @@ The system SHALL allow an authorized Feishu user to inspect and control configur
 - **WHEN** an authorized user sends `/cron list`
 - **THEN** the system returns the configured cronjob tasks for that bot
 - **AND** the response identifies each task as launchd-managed rather than one-shot
+- **AND** the response includes whether the current chat is subscribed to each task and the current runtime state
 
 #### Scenario: Authorized user starts a cronjob task
 - **WHEN** an authorized user sends `/cron start TASK_ID` for a configured cronjob task
-- **THEN** the system reconciles the corresponding launchd job into the started state
+- **THEN** the system subscribes the current chat to that task
+- **AND** it reconciles the corresponding launchd job into the started state if it is not already running
+- **AND** if the job is already running it returns a duplicate-safe success response without restarting the job
 - **AND** the response includes the task identifier and the resulting cronjob state summary
 
 #### Scenario: Authorized user stops a cronjob task
 - **WHEN** an authorized user sends `/cron stop TASK_ID` for a configured cronjob task
 - **THEN** the system reconciles the corresponding launchd job into the stopped state
+- **AND** it clears all persisted chat subscriptions for that task
 - **AND** the response includes the task identifier and the resulting cronjob state summary
 
 #### Scenario: Authorized user checks cronjob status
 - **WHEN** an authorized user sends `/cron status`
 - **THEN** the system returns the currently observed cronjob states for that bot's configured cronjob tasks
-- **AND** the response distinguishes desired state from observed launchd state when they differ
+- **AND** the response reports observed `running` or `stopped` state for each task
+
+### Requirement: Duplicate inbound deliveries do not produce duplicate replies
+The system SHALL suppress duplicate Feishu message and card-action deliveries before they produce duplicate business handling or duplicate replies.
+
+#### Scenario: Duplicate text message delivery is retried by Feishu
+- **WHEN** Feishu delivers the same supported text message event more than once within the configured dedup window
+- **THEN** the system processes the first delivery only once
+- **AND** it does not emit a second reply card for the suppressed duplicate delivery
+
+#### Scenario: Duplicate card action delivery is retried by Feishu
+- **WHEN** Feishu delivers the same card action event more than once within the configured dedup window
+- **THEN** the system processes the first delivery only once
+- **AND** it does not emit a duplicate confirmation, cancellation, or result response for the suppressed duplicate delivery
+
+### Requirement: Monitoring notifications are rendered as titled Feishu cards
+The system SHALL render proactive `checkPDWin11` notifications as informational Feishu cards with explicit titles rather than body-only text messages.
+
+#### Scenario: Startup monitoring notification is rendered as a card
+- **WHEN** `checkPDWin11` emits an `off -> on` proactive notification
+- **THEN** the Feishu delivery layer sends an informational card with the title `MC 启动!`
+
+#### Scenario: Shutdown monitoring notification is rendered as a card
+- **WHEN** `checkPDWin11` emits an `on -> off` proactive notification
+- **THEN** the Feishu delivery layer sends an informational card with the title `MC 下线!`
+
+#### Scenario: Runtime reminder is rendered as a titled card
+- **WHEN** `checkPDWin11` emits an `on -> on` runtime reminder notification
+- **THEN** the Feishu delivery layer sends an informational card whose title reflects the actual uptime, such as `MC 已运行 1小时20分`
 
 #### Scenario: User sends /cron for a one-shot task
 - **WHEN** an authorized user sends `/cron start TASK_ID` or `/cron stop TASK_ID` for a task whose execution mode is `oneshot`
