@@ -17,6 +17,35 @@ import type {
 import { defaultBotWorkingDirectory } from './paths.ts';
 import { parseToml } from './toml.ts';
 
+function predefinedScreencaptureTask(): BuiltinToolTaskDefinition {
+  return {
+    id: 'sc',
+    runnerKind: 'builtin-tool',
+    executionMode: 'oneshot',
+    description: 'Capture the current screen and return the image to this chat',
+    tool: 'screencapture',
+    timeoutMs: 30000,
+    cancellable: false,
+    parameters: {},
+    config: {},
+  };
+}
+
+function validatePredefinedTask(task: TaskDefinition, path: string): void {
+  if (task.id !== 'sc') {
+    return;
+  }
+  if (
+    task.runnerKind !== 'builtin-tool' ||
+    task.executionMode !== 'oneshot' ||
+    task.tool !== 'screencapture'
+  ) {
+    throw new Error(
+      `Predefined task sc must remain a builtin-tool oneshot bound to screencapture at ${path}`,
+    );
+  }
+}
+
 function expectObject(value: unknown, path: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`Expected object at ${path}`);
@@ -206,6 +235,10 @@ function parseBotConfig(botId: string, input: unknown, loadedAt: string): BotCon
   const tasks: Record<string, TaskDefinition> = {};
   for (const [taskId, taskValue] of Object.entries(rawTasks)) {
     tasks[taskId] = parseTask(taskId, taskValue, `bots.${botId}.tasks`);
+    validatePredefinedTask(tasks[taskId], `bots.${botId}.tasks.${taskId}`);
+  }
+  if (!tasks.sc) {
+    tasks.sc = predefinedScreencaptureTask();
   }
 
   return {

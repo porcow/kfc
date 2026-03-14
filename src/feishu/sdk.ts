@@ -1,6 +1,16 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createReadStream } from 'node:fs';
+import { unlink } from 'node:fs/promises';
 
-import type { BotWebSocketHealth, RunRecord, RunUpdateSink } from '../domain.ts';
+import type {
+  BotWebSocketHealth,
+  RunRecord,
+  RunUpdateSink,
+  TaskDefinition,
+  TaskResult,
+  TaskResultArtifact,
+  TaskResultDeliverySink,
+} from '../domain.ts';
 import type { KidsAlfredService } from '../service.ts';
 import { buildRunStatusCard } from './cards.ts';
 
@@ -108,6 +118,16 @@ export interface BotBridge {
 interface ReplyClient {
   im: {
     v1: {
+      image: {
+        create(request: {
+          data: {
+            image_type: string;
+            image: unknown;
+          };
+        }): Promise<{
+          image_key?: string;
+        } | null>;
+      };
       message: {
         create(request: {
           params: {
@@ -284,6 +304,80 @@ export class FeishuRunUpdateSink implements RunUpdateSink {
       );
       // Delivery failures must not affect persisted run state.
     }
+  }
+}
+
+interface FeishuTaskResultSinkOptions {
+  unlink?: typeof unlink;
+  openImage?: (path: string) => unknown;
+}
+
+async function sendFeishuImage(
+  client: ReplyClient,
+  chatId: string,
+  imagePath: string,
+  openImage: (path: string) => unknown,
+): Promise<void> {
+  const upload = await client.im.v1.image.create({
+    data: {
+      image_type: 'message',
+      image: openImage(imagePath),
+    },
+  });
+  const imageKey = upload?.image_key;
+  if (!imageKey) {
+    throw new Error(`Feishu image upload did not return image_key for ${imagePath}`);
+  }
+  await client.im.v1.message.create({
+    params: {
+      receive_id_type: 'chat_id',
+    },
+    data: {
+      receive_id: chatId,
+      content: JSON.stringify({ image_key: imageKey }),
+      msg_type: 'image',
+    },
+  });
+}
+
+export class FeishuTaskResultSink implements TaskResultDeliverySink {
+  private readonly client: ReplyClient;
+  private readonly unlinkImpl: typeof unlink;
+  private readonly openImage: (path: string) => unknown;
+
+  constructor(client: ReplyClient, options: FeishuTaskResultSinkOptions = {}) {
+    this.client = client;
+    this.unlinkImpl = options.unlink ?? unlink;
+    this.openImage = options.openImage ?? ((path: string) => createReadStream(path));
+  }
+
+  async sendTaskResult(run: RunRecord, _task: TaskDefinition, result: TaskResult): Promise<void> {
+    for (const artifact of result.artifacts ?? []) {
+      await this.deliverArtifact(run, artifact);
+    }
+  }
+
+  private async deliverArtifact(run: RunRecord, artifact: TaskResultArtifact): Promise<void> {
+    if (artifact.channel !== 'feishu' || artifact.kind !== 'origin-chat-image') {
+      return;
+    }
+    if (!run.originChatId) {
+      throw new Error(`Run ${run.runId} is missing origin chat context for Feishu image delivery`);
+    }
+    await sendFeishuImage(this.client, run.originChatId, artifact.path, this.openImage);
+    if (artifact.deleteAfterDelivery === false) {
+      return;
+    }
+    await this.unlinkImpl(artifact.path).catch((error) => {
+      console.error(
+        JSON.stringify({
+          logType: 'feishu_artifact_cleanup_failed',
+          runId: run.runId,
+          path: artifact.path,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    });
   }
 }
 
@@ -473,6 +567,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
   service.attachRunUpdateSink(
     new FeishuRunUpdateSink(async (chatId, card) => await sendInteractiveCard(client, chatId, card)),
   );
+  service.attachTaskResultDeliverySink(new FeishuTaskResultSink(client));
   const eventHandlers = createEventDispatcherHandlers(service, client);
 
   const eventDispatcher = new sdk.EventDispatcher({}).register(eventHandlers);

@@ -83,6 +83,7 @@ The uninstaller removes:
 - Send `/help` to get a concise command reference for the bot text interface.
 - Send `/health` to get an informational health summary for the running service, active bots, and per-bot WebSocket state.
 - Send `/tasks` to get an informational catalog of one-shot tasks for the current bot.
+- The predefined screenshot task is always available as `/run sc`; it captures the current screen and returns the image to the same chat after confirmation.
 - If your Feishu user is not yet authorized, the bot returns a one-time pairing card with a local admin command in the form `kfc pair BOT_ID-RAND6`.
 - Each task card includes an example `/run TASK_ID key=value ...` command.
 - Send `/run TASK_ID key=value ...` to validate parameters and get an explicit confirmation card for one-shot tasks.
@@ -135,6 +136,7 @@ The uninstaller removes:
 - All displayed time fields in Feishu cards use `YYYY/MM/DD HH:mm:ss`.
 - `Summary` is a concise operator-facing excerpt derived from the persisted run record, not a raw stdout or stderr dump.
 - Feishu summaries are truncated to 300 characters with an ellipsis when necessary.
+- `/run sc` writes a temporary screenshot file under `~/.kfc/data/screenshot-YYYYMMDD-HHmmss.png`, uploads it back to the originating chat, and removes the file only after successful delivery.
 - If an asynchronous push update fails, the run state remains persisted locally and can still be recovered with `/run-status RUN_ID`.
 
 ## Event Logging

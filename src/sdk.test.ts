@@ -1,5 +1,8 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
 
 import type { RunRecord } from './domain.ts';
 import { buildRunStatusCard } from './feishu/cards.ts';
@@ -8,6 +11,7 @@ import {
   createEventDispatcherHandlers,
   extractCardActionPayload,
   FeishuRunUpdateSink,
+  FeishuTaskResultSink,
 } from './feishu/sdk.ts';
 
 test('card action payload merges button values with top-level form values', () => {
@@ -309,6 +313,154 @@ test('event dispatcher handlers suppress duplicate card actions', async () => {
   assert.deepEqual(actions, ['confirm-1']);
   assert.equal((first as any).header.title.content, 'Updated');
   assert.equal(second, undefined);
+});
+
+test('FeishuTaskResultSink uploads origin-chat images and deletes them after successful delivery', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-feishu-image-'));
+  const screenshotPath = join(directory, 'screenshot.png');
+  await writeFile(screenshotPath, 'fake-image');
+
+  const uploads: string[] = [];
+  const messages: any[] = [];
+  const sink = new FeishuTaskResultSink(
+    {
+      im: {
+        v1: {
+          image: {
+            async create(request: any) {
+              uploads.push(request.data.image?.imagePath ?? 'stream');
+              return { image_key: 'img_v2_123' };
+            },
+          },
+          message: {
+            async create(request: any) {
+              messages.push(request);
+            },
+          },
+        },
+      },
+    } as any,
+    {
+      openImage: (path) => ({ imagePath: path }),
+    },
+  );
+
+  await sink.sendTaskResult(
+    {
+      runId: 'run_sc_1',
+      taskId: 'sc',
+      taskType: 'builtin-tool',
+      actorId: 'operator-1',
+      confirmationId: 'confirm_sc_1',
+      state: 'running',
+      parameters: {},
+      parameterSummary: 'n/a',
+      createdAt: '2026-03-15T10:00:00.000Z',
+      updatedAt: '2026-03-15T10:00:01.000Z',
+      originChatId: 'oc_chat_sc',
+      cancellable: false,
+    },
+    {
+      id: 'sc',
+      runnerKind: 'builtin-tool',
+      executionMode: 'oneshot',
+      description: 'Capture screen',
+      tool: 'screencapture',
+      timeoutMs: 30000,
+      cancellable: false,
+      parameters: {},
+    },
+    {
+      summary: 'Screen captured',
+      artifacts: [
+        {
+          channel: 'feishu',
+          kind: 'origin-chat-image',
+          path: screenshotPath,
+          deleteAfterDelivery: true,
+        },
+      ],
+    },
+  );
+
+  assert.deepEqual(uploads, [screenshotPath]);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].data.msg_type, 'image');
+  assert.equal(messages[0].data.receive_id, 'oc_chat_sc');
+  assert.equal(messages[0].data.content, JSON.stringify({ image_key: 'img_v2_123' }));
+  await assert.rejects(() => stat(screenshotPath));
+});
+
+test('FeishuTaskResultSink retains image files when Feishu delivery fails', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-feishu-image-failure-'));
+  const screenshotPath = join(directory, 'screenshot.png');
+  await writeFile(screenshotPath, 'fake-image');
+
+  const sink = new FeishuTaskResultSink(
+    {
+      im: {
+        v1: {
+          image: {
+            async create() {
+              return { image_key: 'img_v2_456' };
+            },
+          },
+          message: {
+            async create() {
+              throw new Error('delivery blocked');
+            },
+          },
+        },
+      },
+    } as any,
+    {
+      openImage: (path) => ({ imagePath: path }),
+    },
+  );
+
+  await assert.rejects(
+    () =>
+      sink.sendTaskResult(
+        {
+          runId: 'run_sc_2',
+          taskId: 'sc',
+          taskType: 'builtin-tool',
+          actorId: 'operator-1',
+          confirmationId: 'confirm_sc_2',
+          state: 'running',
+          parameters: {},
+          parameterSummary: 'n/a',
+          createdAt: '2026-03-15T10:00:00.000Z',
+          updatedAt: '2026-03-15T10:00:01.000Z',
+          originChatId: 'oc_chat_sc',
+          cancellable: false,
+        },
+        {
+          id: 'sc',
+          runnerKind: 'builtin-tool',
+          executionMode: 'oneshot',
+          description: 'Capture screen',
+          tool: 'screencapture',
+          timeoutMs: 30000,
+          cancellable: false,
+          parameters: {},
+        },
+        {
+          summary: 'Screen captured',
+          artifacts: [
+            {
+              channel: 'feishu',
+              kind: 'origin-chat-image',
+              path: screenshotPath,
+              deleteAfterDelivery: true,
+            },
+          ],
+        },
+      ),
+    /delivery blocked/u,
+  );
+
+  assert.equal((await stat(screenshotPath)).isFile(), true);
 });
 
 test('run status cards normalize long summaries and include canonical fields', () => {

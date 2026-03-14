@@ -15,6 +15,9 @@ app_secret = "ops_app_secret"
 verification_token = "ops_verification_token"
 encrypt_key = "ops_encrypt_key"
 
+# The predefined oneshot task `sc` is available automatically as `/run sc`
+# and does not need an explicit task stanza in this file.
+
 [bots.ops.tasks.echo-tool]
 runner_kind = "builtin-tool"
 execution_mode = "oneshot"

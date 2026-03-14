@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 
 import type {
   RunRecord,
+  TaskResultDeliverySink,
   RunUpdateSink,
   TaskDefinition,
   TaskResult,
@@ -183,11 +184,18 @@ export class TaskRuntime {
   private readonly repository: RunRepository;
   private readonly tools: Map<string, TaskTool>;
   private readonly updates: RunUpdateSink;
+  private readonly resultDeliveries: TaskResultDeliverySink;
 
-  constructor(repository: RunRepository, tools: Map<string, TaskTool>, updates: RunUpdateSink) {
+  constructor(
+    repository: RunRepository,
+    tools: Map<string, TaskTool>,
+    updates: RunUpdateSink,
+    resultDeliveries: TaskResultDeliverySink,
+  ) {
     this.repository = repository;
     this.tools = tools;
     this.updates = updates;
+    this.resultDeliveries = resultDeliveries;
   }
 
   async start(run: RunRecord, task: TaskDefinition): Promise<void> {
@@ -227,6 +235,7 @@ export class TaskRuntime {
           ? await runBuiltinToolViaKfc(task, run, abortController.signal)
           : await runExternalCommand(task, run.parameters, abortController.signal);
 
+      await this.resultDeliveries.sendTaskResult(runningRun, task, result);
       const completed = this.repository.updateRun(run.runId, {
         state: 'succeeded',
         finishedAt: new Date().toISOString(),

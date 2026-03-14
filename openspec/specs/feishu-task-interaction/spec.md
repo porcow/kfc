@@ -1,18 +1,25 @@
 ## ADDED Requirements
 
 ### Requirement: Authorized users can discover tasks and start runs from Feishu text commands
-The system SHALL allow an authorized Feishu user to request the list of available tasks from Feishu, inspect service health, and start a task execution flow by sending a structured text command.
+The system SHALL allow an authorized Feishu user to request the list of available tasks from Feishu, inspect service health, and start task execution flows by sending structured text commands, including the screenshot task `sc`.
 
 #### Scenario: Authorized user requests command help
 - **WHEN** a Feishu user in the allowed user list invokes the bot help command
 - **THEN** the system returns an informational help response that documents the supported text commands
 - **AND** the help response includes at least `/health`, `/tasks`, `/run TASK_ID key=value ...`, `/cron list`, `/cron start TASK_ID`, `/cron stop TASK_ID`, `/cron status`, `/run-status RUN_ID`, `/cancel RUN_ID`, and `/reload`
+- **AND** the help response makes it clear that the screenshot task is invoked through `/run sc`
 - **AND** the help response directs the user to `/tasks` for task-specific example commands rather than duplicating the full task catalog
 
 #### Scenario: Authorized user requests bot health from Feishu
 - **WHEN** a Feishu user in the allowed user list sends `/health`
 - **THEN** the system returns an informational response that summarizes service readiness
 - **AND** it includes the active bot IDs and each bot's current WebSocket health state
+
+#### Scenario: Authorized user requests a screen capture through the standard run flow
+- **WHEN** a Feishu user in the allowed user list sends `/run sc`
+- **THEN** the system treats `sc` as a predefined oneshot task
+- **AND** it follows the standard confirmation flow before execution
+- **AND** after confirmation it delivers the resulting screenshot back to the same Feishu chat where the command was issued
 
 #### Scenario: Authorized user requests the task list
 - **WHEN** a Feishu user in the allowed user list invokes the bot's task-list action

@@ -3,9 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-
 import type { BotConfig } from './domain.ts';
-import { KidsAlfredService, MemoryEventLogSink, MemoryRunUpdateSink } from './service.ts';
+import {
+  KidsAlfredService,
+  MemoryEventLogSink,
+  MemoryRunUpdateSink,
+} from './service.ts';
 
 function createBotConfig(botId: string, databasePath: string): BotConfig {
   return {
@@ -40,6 +43,16 @@ function createBotConfig(botId: string, databasePath: string): BotConfig {
             required: true,
           },
         },
+      },
+      sc: {
+        id: 'sc',
+        runnerKind: 'builtin-tool',
+        executionMode: 'oneshot',
+        description: 'Capture the current screen and return the image to this chat',
+        tool: 'screencapture',
+        timeoutMs: 30000,
+        cancellable: false,
+        parameters: {},
       },
       external: {
         id: 'external',
@@ -186,6 +199,7 @@ test('service exposes informational task cards and text-driven confirmation flow
   const taskListJson = JSON.stringify(taskList.card);
   assert.equal(taskList.type, 'card');
   assert.ok(taskListJson.includes('/run echo message='));
+  assert.ok(taskListJson.includes('/run sc'));
   assert.ok(taskListJson.includes('example-message'));
   assert.ok(!taskListJson.includes('cleanup'));
   assert.ok(!taskListJson.includes('"tag":"button"'));
@@ -296,12 +310,28 @@ test('service returns a task-agnostic help card for authorized users', async () 
   assert.ok(helpJson.includes('/run-status RUN_ID'));
   assert.ok(helpJson.includes('/cancel RUN_ID'));
   assert.ok(helpJson.includes('/reload'));
+  assert.ok(helpJson.includes('/run sc'));
   assert.ok(helpJson.includes('Use `/tasks` to see task-specific example commands.'));
   assert.ok(!helpJson.includes('Builtin echo'));
   assert.ok(!helpJson.includes('/run echo message='));
 
   const unsupported = await service.handleMessage('operator-1', '/unknown');
   assert.ok(JSON.stringify(unsupported.card).includes('Unsupported command'));
+
+  await service.close();
+});
+
+test('service routes /run sc through the standard confirmation flow', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-sc-run-'));
+  const databasePath = join(directory, 'runs.sqlite');
+  const service = new KidsAlfredService(createBotConfig('alpha', databasePath));
+
+  const confirmation = await service.handleMessage('operator-1', '/run sc', { chatId: 'chat-sc-1' });
+  const confirmationId = JSON.stringify(confirmation.card).match(/confirm_[\w-]+/u)?.[0];
+  assert.ok(confirmationId);
+  const confirmationJson = JSON.stringify(confirmation.card);
+  assert.ok(confirmationJson.includes('sc'));
+  assert.ok(confirmationJson.includes('"type":"confirm_task"'));
 
   await service.close();
 });

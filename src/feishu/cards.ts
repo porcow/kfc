@@ -231,6 +231,7 @@ export function buildHelpCard(): CardResponse {
           '',
           '`/run TASK_ID key=value ...`',
           'Validate parameters and return a confirmation card before execution.',
+          'Use `/run sc` to capture the current screen through the standard one-shot flow.',
           '',
           '`/cron list`',
           'List configured cronjob tasks for this bot.',

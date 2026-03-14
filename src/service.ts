@@ -7,7 +7,11 @@ import type {
   PendingConfirmation,
   ReloadResult,
   RunRecord,
+  TaskResult,
+  TaskResultDeliverySink,
   RunUpdateSink,
+  TaskDefinition,
+  TaskTool,
 } from './domain.ts';
 import {
   buildAuthorizationCard,
@@ -33,6 +37,18 @@ export class MemoryRunUpdateSink implements RunUpdateSink {
 
   async sendRunUpdate(run: RunRecord): Promise<void> {
     this.updates.push(run);
+  }
+}
+
+export class MemoryTaskResultDeliverySink implements TaskResultDeliverySink {
+  readonly deliveries: Array<{
+    run: RunRecord;
+    task: TaskDefinition;
+    result: TaskResult;
+  }> = [];
+
+  async sendTaskResult(run: RunRecord, task: TaskDefinition, result: TaskResult): Promise<void> {
+    this.deliveries.push({ run, task, result });
   }
 }
 
@@ -71,6 +87,26 @@ class MultiRunUpdateSink implements RunUpdateSink {
   async sendRunUpdate(run: RunRecord): Promise<void> {
     for (const sink of this.sinks) {
       await sink.sendRunUpdate(run);
+    }
+  }
+}
+
+class MultiTaskResultDeliverySink implements TaskResultDeliverySink {
+  private readonly sinks = new Set<TaskResultDeliverySink>();
+
+  constructor(...sinks: TaskResultDeliverySink[]) {
+    for (const sink of sinks) {
+      this.sinks.add(sink);
+    }
+  }
+
+  addSink(sink: TaskResultDeliverySink): void {
+    this.sinks.add(sink);
+  }
+
+  async sendTaskResult(run: RunRecord, task: TaskDefinition, result: TaskResult): Promise<void> {
+    for (const sink of this.sinks) {
+      await sink.sendTaskResult(run, task, result);
     }
   }
 }
@@ -152,6 +188,7 @@ function parseRunCommand(command: string): { taskId: string; parameters: Record<
 export class KidsAlfredService {
   private readonly botId: string;
   private readonly updates: MultiRunUpdateSink;
+  private readonly resultDeliveries: MultiTaskResultDeliverySink;
   private readonly eventLogs: EventLogSink;
   private readonly reloadHandler?: (botId: string, actorId: string) => Promise<ReloadResult>;
   private config: BotConfig;
@@ -168,14 +205,21 @@ export class KidsAlfredService {
     eventLogs: EventLogSink = new ConsoleEventLogSink(),
     cronController?: CronController,
     repository?: RunRepository,
+    builtinTools?: Map<string, TaskTool>,
   ) {
     this.botId = config.botId;
     this.updates = new MultiRunUpdateSink(updates);
+    this.resultDeliveries = new MultiTaskResultDeliverySink();
     this.eventLogs = eventLogs;
     this.reloadHandler = reloadHandler;
     this.config = config;
     this.repository = repository ?? new RunRepository(config.storage.sqlitePath);
-    this.runtime = new TaskRuntime(this.repository, createBuiltinToolRegistry(), this.updates);
+    this.runtime = new TaskRuntime(
+      this.repository,
+      builtinTools ?? createBuiltinToolRegistry(),
+      this.updates,
+      this.resultDeliveries,
+    );
     this.cronController =
       cronController ?? new MemoryCronController(config.botId, config.tasks, this.repository);
     this.repository.reconcileInterruptedRuns();
@@ -214,6 +258,10 @@ export class KidsAlfredService {
 
   attachRunUpdateSink(sink: RunUpdateSink): void {
     this.updates.addSink(sink);
+  }
+
+  attachTaskResultDeliverySink(sink: TaskResultDeliverySink): void {
+    this.resultDeliveries.addSink(sink);
   }
 
   isAuthorized(actorId: string): boolean {
@@ -544,7 +592,7 @@ export class KidsAlfredService {
         return response;
       }
       const response = buildErrorCard(
-        'Unsupported command. Use /help, /health, /tasks, /run TASK_ID key=value ..., /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.',
+        'Unsupported command. Use /help, /health, /tasks, /run TASK_ID key=value ... (for example `/run sc`), /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.',
       );
       await this.logEvent({
         actorId,

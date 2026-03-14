@@ -94,6 +94,9 @@ test('loadConfig parses multiple bots from TOML', async () => {
   assert.equal(config.bots.alpha.allowedUsers[0], 'user-1');
   assert.equal(config.bots.alpha.tasks.echo.runnerKind, 'builtin-tool');
   assert.equal(config.bots.alpha.tasks.echo.executionMode, 'oneshot');
+  assert.equal(config.bots.alpha.tasks.sc.runnerKind, 'builtin-tool');
+  assert.equal(config.bots.alpha.tasks.sc.executionMode, 'oneshot');
+  assert.equal(config.bots.alpha.tasks.sc.tool, 'screencapture');
   assert.equal(config.bots.beta.tasks.say.runnerKind, 'external-command');
   assert.equal(config.bots.beta.tasks.say.executionMode, 'oneshot');
   assert.equal(config.bots.beta.tasks.say.args[1], '{{name}}');

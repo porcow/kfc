@@ -129,6 +129,7 @@ export interface TaskResult {
   exitCode?: number;
   data?: Record<string, unknown>;
   notifications?: TaskNotificationIntent[];
+  artifacts?: TaskResultArtifact[];
 }
 
 export interface TaskNotificationIntent {
@@ -136,6 +137,13 @@ export interface TaskNotificationIntent {
   chatId?: string;
   title?: string;
   body: string;
+}
+
+export interface TaskResultArtifact {
+  channel: 'feishu';
+  kind: 'origin-chat-image';
+  path: string;
+  deleteAfterDelivery?: boolean;
 }
 
 export interface PDWin11MonitorState {
@@ -164,6 +172,10 @@ export interface TaskRunContext {
 export interface TaskTool {
   id: string;
   execute(context: TaskRunContext): Promise<TaskResult>;
+}
+
+export interface TaskResultDeliverySink {
+  sendTaskResult(run: RunRecord, task: TaskDefinition, result: TaskResult): Promise<void>;
 }
 
 export interface CardResponse {
