@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -163,6 +163,104 @@ test('kfc CLI delegates service lifecycle commands', async () => {
   );
 
   assert.deepEqual(calls, ['install:/tmp/bot.toml', 'uninstall', 'start', 'restart', 'stop']);
+});
+
+test('kfc service install falls back to the default config path when --config is omitted', async () => {
+  const outputs: string[] = [];
+  const errors: string[] = [];
+  const previousHome = process.env.HOME;
+  const previousConfig = process.env.KIDS_ALFRED_CONFIG;
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-install-default-'));
+  process.env.HOME = directory;
+  delete process.env.KIDS_ALFRED_CONFIG;
+  await mkdir(join(directory, '.config', 'kfc'), { recursive: true });
+  await writeFile(join(directory, '.config', 'kfc', 'config.toml'), '[server]\nport = 3000\n');
+
+  const calls: string[] = [];
+  try {
+    const exitCode = await runKfcCli(
+      ['service', 'install'],
+      {
+        serviceManager: {
+          async install(configPath) {
+            calls.push(configPath);
+          },
+          async uninstall() {},
+          async start() {},
+          async restart() {},
+          async stop() {},
+        },
+        pairAuthorizer: async () => ({ actorId: '', changed: false }),
+        taskExecutor: async () => ({ summary: 'ok' }),
+        stdout: { write(value) { outputs.push(String(value)); } },
+        stderr: { write(value) { errors.push(String(value)); } },
+      },
+    );
+
+    assert.equal(exitCode, 0);
+    assert.deepEqual(calls, [join(directory, '.config', 'kfc', 'config.toml')]);
+    assert.ok(outputs.some((entry) => entry.includes('Service installed')));
+    assert.deepEqual(errors, []);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousConfig === undefined) {
+      delete process.env.KIDS_ALFRED_CONFIG;
+    } else {
+      process.env.KIDS_ALFRED_CONFIG = previousConfig;
+    }
+  }
+});
+
+test('kfc service install without --config returns a clear error when the default config file is missing', async () => {
+  const outputs: string[] = [];
+  const errors: string[] = [];
+  const previousHome = process.env.HOME;
+  const previousConfig = process.env.KIDS_ALFRED_CONFIG;
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-install-missing-'));
+  process.env.HOME = directory;
+  delete process.env.KIDS_ALFRED_CONFIG;
+
+  const calls: string[] = [];
+  try {
+    const exitCode = await runKfcCli(
+      ['service', 'install'],
+      {
+        serviceManager: {
+          async install(configPath) {
+            calls.push(configPath);
+          },
+          async uninstall() {},
+          async start() {},
+          async restart() {},
+          async stop() {},
+        },
+        pairAuthorizer: async () => ({ actorId: '', changed: false }),
+        taskExecutor: async () => ({ summary: 'ok' }),
+        stdout: { write(value) { outputs.push(String(value)); } },
+        stderr: { write(value) { errors.push(String(value)); } },
+      },
+    );
+
+    assert.equal(exitCode, 1);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(outputs, []);
+    assert.ok(errors.some((entry) => entry.includes(join(directory, '.config', 'kfc', 'config.toml'))));
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousConfig === undefined) {
+      delete process.env.KIDS_ALFRED_CONFIG;
+    } else {
+      process.env.KIDS_ALFRED_CONFIG = previousConfig;
+    }
+  }
 });
 
 test('kfc CLI delegates pair and exec commands', async () => {

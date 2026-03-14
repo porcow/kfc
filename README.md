@@ -40,7 +40,13 @@ Useful installer overrides:
 After the installer finishes, edit the generated config and then run:
 
 ```sh
-~/.local/bin/kfc service install --config ~/.config/kfc/config.toml
+~/.local/bin/kfc service install
+```
+
+If you keep the config anywhere other than `~/.config/kfc/config.toml`, use:
+
+```sh
+~/.local/bin/kfc service install --config /path/to/bot.toml
 ```
 
 To completely uninstall the user-local installation later, run:
@@ -93,7 +99,8 @@ Delivery is subscription-driven: chats subscribe with `/cron start TASK_ID`, `/c
 ## Local CLI
 
 - [`kfc`](kfc) is the primary local admin entrypoint.
-- `./kfc service install --config /path/to/bot.toml` writes or refreshes `~/Library/LaunchAgents/com.kidsalfred.service.plist`, installs launchd management, and starts the main service immediately.
+- `./kfc service install` writes or refreshes `~/Library/LaunchAgents/com.kidsalfred.service.plist`, installs launchd management, and starts the main service immediately using `~/.config/kfc/config.toml`.
+- `./kfc service install --config /path/to/bot.toml` does the same using an explicit override path.
 - `./kfc service uninstall` stops the managed service if needed and removes `~/Library/LaunchAgents/com.kidsalfred.service.plist`.
 - `./kfc service start` starts an already-installed service.
 - `./kfc service restart` restarts an already-installed service without changing cronjob policy.

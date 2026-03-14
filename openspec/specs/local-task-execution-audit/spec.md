@@ -162,12 +162,26 @@ The system SHALL persist cronjob management state independently from one-shot ru
 ### Requirement: `kfc` is the controlled local execution and lifecycle interface
 The system SHALL provide a unified local CLI named `kfc` for service lifecycle, pairing, and controlled direct task execution.
 
-#### Scenario: Local admin installs and starts the service
+#### Scenario: Local admin installs and starts the service with an explicit config path
 - **WHEN** a local administrator executes `kfc service install --config /path/to/bot.toml`
 - **THEN** the system writes or refreshes the main-service plist at `~/Library/LaunchAgents/com.kidsalfred.service.plist`
 - **AND** it installs launchd management for the main service under the stable label `com.kidsalfred.service`
 - **AND** it starts the main service immediately
 - **AND** installation triggers configuration validation and cronjob reconciliation
+
+#### Scenario: Local admin installs and starts the service with the default config path
+- **WHEN** a local administrator executes `kfc service install` without `--config`
+- **THEN** the system resolves the service config path to `~/.config/kfc/config.toml`
+- **AND** it writes or refreshes the main-service plist at `~/Library/LaunchAgents/com.kidsalfred.service.plist`
+- **AND** it installs launchd management for the main service under the stable label `com.kidsalfred.service`
+- **AND** it starts the main service immediately
+- **AND** installation triggers configuration validation and cronjob reconciliation
+
+#### Scenario: Local admin installs without an explicit config and the default file is missing
+- **WHEN** a local administrator executes `kfc service install` without `--config`
+- **AND** `~/.config/kfc/config.toml` does not exist
+- **THEN** the system returns a clear operator-facing error that names the missing default config path
+- **AND** it does not install launchd management for the main service
 
 #### Scenario: Local admin starts or restarts an installed service
 - **WHEN** a local administrator executes `kfc service start` or `kfc service restart`

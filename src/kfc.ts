@@ -358,6 +358,21 @@ async function ensureInstalledService(): Promise<string> {
   return plistPath;
 }
 
+async function resolveServiceInstallConfigPath(explicitPath?: string): Promise<string> {
+  if (explicitPath?.trim()) {
+    return explicitPath;
+  }
+
+  const configPath = defaultConfigPath();
+  try {
+    await access(configPath, constants.F_OK);
+  } catch {
+    throw new Error(`Default config not found: ${configPath}`);
+  }
+
+  return configPath;
+}
+
 function createDefaultDeps(): KfcCliDeps {
   return {
     serviceManager: new LaunchdServiceManager(),
@@ -389,10 +404,7 @@ export async function runKfcCli(argv: string[], deps: KfcCliDeps = createDefault
       const flags = parseFlags(flagsList);
       switch (action) {
         case 'install':
-          if (!flags['--config']) {
-            throw new Error('Usage: kfc service install --config /path/to/bot.toml');
-          }
-          await deps.serviceManager.install(flags['--config']);
+          await deps.serviceManager.install(await resolveServiceInstallConfigPath(flags['--config']));
           deps.stdout.write('Service installed\n');
           return 0;
         case 'uninstall':

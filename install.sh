@@ -75,6 +75,13 @@ if [ ! -f "${KFC_CONFIG_PATH}" ]; then
   cp "${KFC_INSTALL_DIR}/app/config/example.bot.toml" "${KFC_CONFIG_PATH}"
 fi
 
+DEFAULT_CONFIG_PATH="${HOME}/.config/kfc/config.toml"
+if [ "${KFC_CONFIG_PATH}" = "${DEFAULT_CONFIG_PATH}" ]; then
+  INSTALL_COMMAND="${KFC_BIN_DIR}/kfc service install"
+else
+  INSTALL_COMMAND="${KFC_BIN_DIR}/kfc service install --config ${KFC_CONFIG_PATH}"
+fi
+
 cat <<EOF
 Installed kfc into:
   app:    ${KFC_INSTALL_DIR}/app
@@ -86,7 +93,7 @@ If ${KFC_BIN_DIR} is not on your PATH, add it before using kfc directly.
 Next steps:
 1. Edit ${KFC_CONFIG_PATH} with your Feishu credentials, allowed users, and tasks.
 2. Install and start the launchd-managed service:
-   ${KFC_BIN_DIR}/kfc service install --config ${KFC_CONFIG_PATH}
+   ${INSTALL_COMMAND}
 3. Later lifecycle commands are:
    ${KFC_BIN_DIR}/kfc service start
    ${KFC_BIN_DIR}/kfc service restart
