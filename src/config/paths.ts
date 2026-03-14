@@ -13,3 +13,12 @@ export function defaultBotWorkingDirectory(): string {
   const home = process.env.HOME ?? process.cwd();
   return join(home, '.kfc');
 }
+
+export function defaultAppPath(): string {
+  if (process.env.KFC_INSTALL_DIR?.trim()) {
+    return resolve(process.env.KFC_INSTALL_DIR, 'app');
+  }
+
+  const home = process.env.HOME ?? process.cwd();
+  return join(home, '.local', 'share', 'kfc', 'app');
+}
