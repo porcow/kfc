@@ -77,18 +77,6 @@ The uninstaller removes:
 - Cronjob desired and observed state is stored separately from one-shot run history and reconciled against `launchd` on startup and reload.
 - `/health` now reports both process liveness and per-bot WebSocket readiness. Use it to distinguish “process is up” from “bot is actually receiving Feishu events”.
 
-## Built-In Tools
-
-Built-in task tools live under [`src/tools`](src/tools). They remain repository-owned task implementations, but runtime execution now routes them through the controlled `kfc exec` child-process boundary so one-shot runs and cronjobs share the same execution model as external commands. Tool code is shared across bots, but each bot chooses which tasks to expose in its own TOML section.
-
-The `checkPDWin11` built-in tool is intended for cronjob use. It polls the macOS process list for a Parallels Desktop VM whose command line matches the configured `vm_name_match` value, persists `PDWin11State=off|on` in the bot's SQLite store, and emits proactive Feishu card notifications for these cases:
-- `off -> on`: title `MC 启动!`
-- `on -> off`: title `MC 下线!`
-- `on -> on` after uptime reaches one hour: first reminder immediately, then every 10 minutes while the VM remains on, with titles like `MC 已运行 1小时20分`
-
-Delivery is subscription-driven: chats subscribe with `/cron start TASK_ID`, `/cron stop TASK_ID` clears subscriptions globally, and all notification timestamps are rendered in host-local `YYYY/MM/DD HH:mm:ss` format.
-
-All human-facing timestamps sent into the Feishu chat UI use the same canonical format: `YYYY/MM/DD HH:mm:ss`. This applies to run cards, `/health` replies, and proactive monitoring cards, but not to internal storage or Feishu API protocol payloads.
 
 ## Feishu Interaction Flow
 
