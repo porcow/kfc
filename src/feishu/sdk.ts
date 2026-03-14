@@ -303,6 +303,9 @@ function detectMessageCommandType(text: string): string {
   if (trimmed === '/help') {
     return 'help';
   }
+  if (trimmed === '/health') {
+    return 'health';
+  }
   if (trimmed === '/tasks') {
     return 'tasks';
   }

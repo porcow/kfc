@@ -15,15 +15,22 @@ if [ "$(uname -s)" != "Darwin" ]; then
   exit 1
 fi
 
-# Preferred path: invoke `kfc service uninstall` first when the installed launcher exists.
+# Preferred path: invoke `kfc uninstall --yes` when the installed launcher exists.
 if [ -x "${KFC_BIN_PATH}" ]; then
-  "${KFC_BIN_PATH}" service uninstall >/dev/null 2>&1 || true
+  "${KFC_BIN_PATH}" uninstall --yes >/dev/null 2>&1 || true
 fi
 
 if [ -f "${KFC_PLIST_PATH}" ] && command -v launchctl >/dev/null 2>&1; then
   launchctl bootout "gui/$(id -u)/${KFC_LAUNCH_LABEL}" >/dev/null 2>&1 || true
   launchctl bootout "gui/$(id -u)" "${KFC_PLIST_PATH}" >/dev/null 2>&1 || true
   rm -f "${KFC_PLIST_PATH}"
+fi
+
+if [ -d "${KFC_WORK_DIR}" ] && command -v launchctl >/dev/null 2>&1; then
+  find "${KFC_WORK_DIR}" -type f -path '*/launchd/*.plist' -print 2>/dev/null | while IFS= read -r cron_plist; do
+    launchctl bootout "gui/$(id -u)" "${cron_plist}" >/dev/null 2>&1 || true
+    rm -f "${cron_plist}"
+  done
 fi
 
 rm -rf "${KFC_INSTALL_DIR}"

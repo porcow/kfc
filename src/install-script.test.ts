@@ -38,9 +38,10 @@ test('uninstall.sh exists, is executable, and documents the expected uninstall f
   assert.match(script, /KFC_BIN_DIR/);
   assert.match(script, /KFC_CONFIG_PATH/);
   assert.match(script, /KFC_WORK_DIR/);
-  assert.match(script, /kfc service uninstall/);
+  assert.match(script, /kfc uninstall --yes/);
   assert.match(script, /Library\/LaunchAgents\/com\.kidsalfred\.service\.plist/);
   assert.match(script, /launchctl bootout/);
+  assert.match(script, /find "\$\{KFC_WORK_DIR\}" -type f -path '\*\/launchd\/\*\.plist'/);
   assert.match(script, /rm -rf "\$\{KFC_WORK_DIR\}"/);
   assert.match(script, /rm -rf/);
   assert.match(script, /rm -f/);

@@ -272,12 +272,25 @@ test('service returns a task-agnostic help card for authorized users', async () 
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-help-'));
   const databasePath = join(directory, 'runs.sqlite');
   const service = new KidsAlfredService(createBotConfig('alpha', databasePath));
+  service.setHealthSnapshotProvider(() => ({
+    ok: true,
+    loadedAt: '2026-03-14T08:00:00.000Z',
+    bots: ['alpha'],
+    websocket: {
+      alpha: {
+        state: 'connected',
+        consecutiveReconnectFailures: 0,
+      },
+    },
+    ready: true,
+  }));
 
   const help = await service.handleMessage('operator-1', '/help');
   const helpJson = JSON.stringify(help.card);
 
   assert.equal(help.type, 'card');
   assert.ok(helpJson.includes('Available commands'));
+  assert.ok(helpJson.includes('/health'));
   assert.ok(helpJson.includes('/tasks'));
   assert.ok(helpJson.includes('/run TASK_ID key=value ...'));
   assert.ok(helpJson.includes('/run-status RUN_ID'));
@@ -289,6 +302,45 @@ test('service returns a task-agnostic help card for authorized users', async () 
 
   const unsupported = await service.handleMessage('operator-1', '/unknown');
   assert.ok(JSON.stringify(unsupported.card).includes('Unsupported command'));
+
+  await service.close();
+});
+
+test('service returns health from the shared snapshot for authorized users', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-health-command-'));
+  const databasePath = join(directory, 'runs.sqlite');
+  const service = new KidsAlfredService(createBotConfig('alpha', databasePath));
+  service.setHealthSnapshotProvider(() => ({
+    ok: true,
+    loadedAt: '2026-03-14T08:00:00.000Z',
+    bots: ['alpha', 'beta'],
+    websocket: {
+      alpha: {
+        state: 'connected',
+        consecutiveReconnectFailures: 0,
+      },
+      beta: {
+        state: 'reconnecting',
+        consecutiveReconnectFailures: 2,
+        nextReconnectAt: '2026-03-14T08:10:00.000Z',
+      },
+    },
+    ready: false,
+  }));
+
+  const health = await service.handleMessage('operator-1', '/health', { chatId: 'chat-health-1' });
+  const healthJson = JSON.stringify(health.card);
+
+  assert.equal(health.type, 'card');
+  assert.ok(healthJson.includes('Service health'));
+  assert.ok(healthJson.includes('Ready: **false**'));
+  assert.ok(healthJson.includes('alpha'));
+  assert.ok(healthJson.includes('beta'));
+  assert.ok(healthJson.includes('reconnecting'));
+  assert.ok(healthJson.includes('2026/03/14 16:00:00'));
+  assert.ok(healthJson.includes('2026/03/14 16:10:00'));
+  assert.ok(!healthJson.includes('2026-03-14T08:00:00.000Z'));
+  assert.ok(!healthJson.includes('2026-03-14T08:10:00.000Z'));
 
   await service.close();
 });
@@ -316,15 +368,23 @@ test('service persists origin chat context and returns canonical run status card
   assert.ok(queuedJson.includes('Run ID'));
   assert.ok(queuedJson.includes('Started At'));
   assert.ok(queuedJson.includes('Finished At'));
+  assert.ok(queuedJson.includes('Started At: n/a'));
+  assert.ok(queuedJson.includes('Finished At: n/a'));
 
   await waitForState(service, 'operator-1', runId!, 'succeeded');
   const completed = service.getRunStatus('operator-1', runId!);
   const completedJson = JSON.stringify(completed.card);
   assert.ok(completedJson.includes('Started At'));
   assert.ok(completedJson.includes('Finished At'));
+  assert.match(completedJson, /Started At: 20\d\d\/\d\d\/\d\d \d\d:\d\d:\d\d/u);
+  assert.match(completedJson, /Finished At: 20\d\d\/\d\d\/\d\d \d\d:\d\d:\d\d/u);
+  assert.doesNotMatch(completedJson, /Started At: \d{4}-\d{2}-\d{2}T/u);
+  assert.doesNotMatch(completedJson, /Finished At: \d{4}-\d{2}-\d{2}T/u);
 
   const [stored] = service.listRecentRuns('operator-1');
   assert.equal(stored.originChatId, 'chat-contract-1');
+  assert.match(stored.startedAt ?? '', /T/u);
+  assert.match(stored.finishedAt ?? '', /T/u);
 
   await service.close();
 });
@@ -397,6 +457,11 @@ test('message and card handlers return authorization and validation feedback as 
   assert.equal(unauthorizedHelp.type, 'error');
   assert.ok(JSON.stringify(unauthorizedHelp.card).includes('kfc pair alpha-'));
   assert.ok(!JSON.stringify(unauthorizedHelp.card).includes('Available commands'));
+
+  const unauthorizedHealth = await service.handleMessage('unknown-user', '/health');
+  assert.equal(unauthorizedHealth.type, 'error');
+  assert.ok(JSON.stringify(unauthorizedHealth.card).includes('kfc pair alpha-'));
+  assert.ok(!JSON.stringify(unauthorizedHealth.card).includes('Service health'));
 
   const unknownTask = await service.handleMessage('operator-1', '/run missing-task message="x"');
   assert.equal(unknownTask.type, 'error');

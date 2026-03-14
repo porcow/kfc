@@ -1,4 +1,12 @@
-import type { CardResponse, CronJobRecord, ParameterDefinition, RunRecord, TaskDefinition } from '../domain.ts';
+import type {
+  AppHealthSnapshot,
+  CardResponse,
+  CronJobRecord,
+  ParameterDefinition,
+  RunRecord,
+  TaskDefinition,
+} from '../domain.ts';
+import { formatFeishuTimestamp, formatOptionalFeishuTimestamp } from './timestamp.ts';
 
 const FEISHU_SUMMARY_LIMIT = 300;
 
@@ -215,6 +223,9 @@ export function buildHelpCard(): CardResponse {
     card: baseCard('Available commands', [
       buildMarkdown(
         [
+          '`/health`',
+          'Show service readiness and per-bot WebSocket health.',
+          '',
           '`/tasks`',
           'List available tasks and their example `/run` commands.',
           '',
@@ -246,6 +257,43 @@ export function buildHelpCard(): CardResponse {
         ].join('\n'),
       ),
     ]),
+  };
+}
+
+function formatHealthDetails(snapshot: AppHealthSnapshot): string {
+  const botLines = snapshot.bots.length === 0
+    ? ['- No active bots']
+    : snapshot.bots.map((botId) => {
+        const health = snapshot.websocket[botId];
+        const details = [
+          `- **${botId}**: **${health?.state ?? 'unknown'}**`,
+          health?.lastConnectedAt
+            ? `  - Last connected: \`${formatFeishuTimestamp(health.lastConnectedAt)}\``
+            : '',
+          health?.nextReconnectAt
+            ? `  - Next reconnect: \`${formatFeishuTimestamp(health.nextReconnectAt)}\``
+            : '',
+          health?.consecutiveReconnectFailures !== undefined
+            ? `  - Reconnect failures: **${health.consecutiveReconnectFailures}**`
+            : '',
+          health?.warning ? `  - Warning: ${health.warning}` : '',
+        ].filter(Boolean);
+        return details.join('\n');
+      });
+
+  return [
+    `Ready: **${snapshot.ready ? 'true' : 'false'}**`,
+    `Loaded at: \`${formatFeishuTimestamp(snapshot.loadedAt)}\``,
+    '',
+    '**Bots**',
+    ...botLines,
+  ].join('\n');
+}
+
+export function buildHealthCard(snapshot: AppHealthSnapshot): CardResponse {
+  return {
+    type: 'card',
+    card: baseCard('Service health', [buildMarkdown(formatHealthDetails(snapshot))]),
   };
 }
 
@@ -292,12 +340,12 @@ export function buildRunStatusCard(run: RunRecord): CardResponse {
     type: 'card',
     card: baseCard(`Run ${run.runId}`, [
       buildMarkdown(
-        `Run ID: \`${run.runId}\`\n` +
+          `Run ID: \`${run.runId}\`\n` +
           `Task: **${run.taskId}**\n` +
           `State: **${run.state}**\n` +
           `Actor: \`${run.actorId}\`\n` +
-          `Started At: ${run.startedAt ?? 'n/a'}\n` +
-          `Finished At: ${run.finishedAt ?? 'n/a'}\n` +
+          `Started At: ${formatOptionalFeishuTimestamp(run.startedAt)}\n` +
+          `Finished At: ${formatOptionalFeishuTimestamp(run.finishedAt)}\n` +
           `Summary: ${normalizeSummary(run)}`,
       ),
     ]),

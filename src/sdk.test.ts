@@ -334,6 +334,9 @@ test('run status cards normalize long summaries and include canonical fields', (
   assert.ok(json.includes('Run ID'));
   assert.ok(json.includes('Started At'));
   assert.ok(json.includes('Finished At'));
+  assert.ok(json.includes('2026/03/12 18:01:00'));
+  assert.ok(json.includes('2026/03/12 18:02:00'));
+  assert.ok(!json.includes('2026-03-12T10:01:00.000Z'));
   assert.ok(json.includes('...'));
   assert.ok(!json.includes('x'.repeat(320)));
 });

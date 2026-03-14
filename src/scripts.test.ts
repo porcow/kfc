@@ -26,7 +26,7 @@ test('repository kfc wrapper invokes the CLI entrypoint', async () => {
     execFileAsync(wrapperPath),
     (error: NodeJS.ErrnoException & { stderr?: string; code?: number }) => {
       assert.equal(error.code, 1);
-      assert.match(error.stderr ?? '', /Usage: kfc <service\|pair\|exec> \.\.\./u);
+      assert.match(error.stderr ?? '', /Usage: kfc <service\|health\|pair\|exec\|uninstall> \.\.\./u);
       return true;
     },
   );

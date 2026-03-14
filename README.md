@@ -55,11 +55,18 @@ To completely uninstall the user-local installation later, run:
 curl -fsSL https://raw.githubusercontent.com/porcow/kfc/main/uninstall.sh | sh
 ```
 
+Or run the interactive CLI uninstall directly:
+
+```sh
+~/.local/bin/kfc uninstall
+```
+
 The uninstaller removes:
 - `~/.local/share/kfc`
 - `~/.local/bin/kfc`
 - `~/.config/kfc/config.toml`
-- `~/Library/LaunchAgents/com.kidsalfred.service.plist` after first attempting `kfc service uninstall`
+- `~/Library/LaunchAgents/com.kidsalfred.service.plist` after first attempting `kfc uninstall --yes`
+- launchd registrations and plist files for configured cronjobs under the installed config or `~/.kfc/**/launchd/*.plist` as a fallback
 
 ## Runtime Model
 
@@ -81,9 +88,12 @@ The `checkPDWin11` built-in tool is intended for cronjob use. It polls the macOS
 
 Delivery is subscription-driven: chats subscribe with `/cron start TASK_ID`, `/cron stop TASK_ID` clears subscriptions globally, and all notification timestamps are rendered in host-local `YYYY/MM/DD HH:mm:ss` format.
 
+All human-facing timestamps sent into the Feishu chat UI use the same canonical format: `YYYY/MM/DD HH:mm:ss`. This applies to run cards, `/health` replies, and proactive monitoring cards, but not to internal storage or Feishu API protocol payloads.
+
 ## Feishu Interaction Flow
 
 - Send `/help` to get a concise command reference for the bot text interface.
+- Send `/health` to get an informational health summary for the running service, active bots, and per-bot WebSocket state.
 - Send `/tasks` to get an informational catalog of one-shot tasks for the current bot.
 - If your Feishu user is not yet authorized, the bot returns a one-time pairing card with a local admin command in the form `kfc pair BOT_ID-RAND6`.
 - Each task card includes an example `/run TASK_ID key=value ...` command.
@@ -99,9 +109,12 @@ Delivery is subscription-driven: chats subscribe with `/cron start TASK_ID`, `/c
 ## Local CLI
 
 - [`kfc`](kfc) is the primary local admin entrypoint.
+- `./kfc health` fetches the running service's configured loopback health endpoint and prints the canonical health snapshot.
 - `./kfc service install` writes or refreshes `~/Library/LaunchAgents/com.kidsalfred.service.plist`, installs launchd management, and starts the main service immediately using `~/.config/kfc/config.toml`.
 - `./kfc service install --config /path/to/bot.toml` does the same using an explicit override path.
-- `./kfc service uninstall` stops the managed service if needed and removes `~/Library/LaunchAgents/com.kidsalfred.service.plist`.
+- `./kfc service uninstall` stops the managed service if needed, unloads all configured bot-scoped cronjobs from launchd, removes their cron plist files, and then removes `~/Library/LaunchAgents/com.kidsalfred.service.plist`.
+- `./kfc uninstall` performs a full user-local uninstall after interactive confirmation, removing launchd state, the installed app tree, launcher, default config, and `~/.kfc`.
+- `./kfc uninstall --yes` performs the same full uninstall non-interactively and is intended for scripts such as `uninstall.sh`.
 - `./kfc service start` starts an already-installed service.
 - `./kfc service restart` restarts an already-installed service without changing cronjob policy.
 - `./kfc service stop` stops an already-installed service without uninstalling it. Cronjobs still follow their configured `auto_start` policy the next time the service reconciles.
@@ -131,6 +144,7 @@ Delivery is subscription-driven: chats subscribe with `/cron start TASK_ID`, `/c
 ## Run Result Contract
 
 - Run cards always render the same canonical fields: `Run ID`, `Task`, `State`, `Actor`, `Started At`, `Finished At`, and `Summary`.
+- All displayed time fields in Feishu cards use `YYYY/MM/DD HH:mm:ss`.
 - `Summary` is a concise operator-facing excerpt derived from the persisted run record, not a raw stdout or stderr dump.
 - Feishu summaries are truncated to 300 characters with an ellipsis when necessary.
 - If an asynchronous push update fails, the run state remains persisted locally and can still be recovered with `/run-status RUN_ID`.

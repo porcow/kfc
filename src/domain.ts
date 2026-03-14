@@ -232,3 +232,11 @@ export interface BotWebSocketHealth {
   fallbackEventPath?: string;
   warning?: string;
 }
+
+export interface AppHealthSnapshot {
+  ok: true;
+  loadedAt: string;
+  bots: string[];
+  websocket: Record<string, BotWebSocketHealth>;
+  ready: boolean;
+}

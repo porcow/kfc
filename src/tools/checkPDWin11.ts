@@ -7,6 +7,7 @@ import type {
   TaskResult,
   TaskTool,
 } from '../domain.ts';
+import { formatFeishuTimestamp } from '../feishu/timestamp.ts';
 
 const execFileAsync = promisify(execFile);
 const LSTART_LENGTH = 24;
@@ -23,17 +24,6 @@ interface CheckPDWin11Deps {
 
 const RUNTIME_REMINDER_THRESHOLD_MS = 60 * 60 * 1000;
 const RUNTIME_REMINDER_INTERVAL_MS = 10 * 60 * 1000;
-
-function pad(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-function formatTimestamp(value: string): string {
-  const date = new Date(value);
-  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(
-    date.getHours(),
-  )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
 
 function formatDuration(totalMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(totalMs / 1000));
@@ -113,7 +103,7 @@ function buildStartupResult(startTime: string, observedAt: string): TaskResult {
       {
         channel: 'feishu',
         title: 'MC 启动!',
-        body: `Windows 11 start time: ${formatTimestamp(startTime)}\nCurrent runtime: ${runtime}`,
+        body: `Windows 11 start time: ${formatFeishuTimestamp(startTime)}\nCurrent runtime: ${runtime}`,
       },
     ],
   };
@@ -127,7 +117,7 @@ function buildShutdownResult(startTime: string, shutdownTime: string): TaskResul
       {
         channel: 'feishu',
         title: 'MC 下线!',
-        body: `Windows 11 shutdown time: ${formatTimestamp(shutdownTime)}\nCumulative runtime: ${runtime}`,
+        body: `Windows 11 shutdown time: ${formatFeishuTimestamp(shutdownTime)}\nCumulative runtime: ${runtime}`,
       },
     ],
   };
@@ -141,7 +131,7 @@ function buildRuntimeReminderResult(startTime: string, observedAt: string): Task
       {
         channel: 'feishu',
         title: `MC 已运行 ${runtime}`,
-        body: `Windows 11 已运行超过 1 小时\nWindows 11 start time: ${formatTimestamp(
+        body: `Windows 11 已运行超过 1 小时\nWindows 11 start time: ${formatFeishuTimestamp(
           startTime,
         )}\nCurrent runtime: ${runtime}`,
       },

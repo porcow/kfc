@@ -1,13 +1,18 @@
 ## ADDED Requirements
 
 ### Requirement: Authorized users can discover tasks and start runs from Feishu text commands
-The system SHALL allow an authorized Feishu user to request the list of available tasks from Feishu and start a task execution flow by sending a structured text command.
+The system SHALL allow an authorized Feishu user to request the list of available tasks from Feishu, inspect service health, and start a task execution flow by sending a structured text command.
 
 #### Scenario: Authorized user requests command help
 - **WHEN** a Feishu user in the allowed user list invokes the bot help command
 - **THEN** the system returns an informational help response that documents the supported text commands
-- **AND** the help response includes at least `/tasks`, `/run TASK_ID key=value ...`, `/cron list`, `/cron start TASK_ID`, `/cron stop TASK_ID`, `/cron status`, `/run-status RUN_ID`, `/cancel RUN_ID`, and `/reload`
+- **AND** the help response includes at least `/health`, `/tasks`, `/run TASK_ID key=value ...`, `/cron list`, `/cron start TASK_ID`, `/cron stop TASK_ID`, `/cron status`, `/run-status RUN_ID`, `/cancel RUN_ID`, and `/reload`
 - **AND** the help response directs the user to `/tasks` for task-specific example commands rather than duplicating the full task catalog
+
+#### Scenario: Authorized user requests bot health from Feishu
+- **WHEN** a Feishu user in the allowed user list sends `/health`
+- **THEN** the system returns an informational response that summarizes service readiness
+- **AND** it includes the active bot IDs and each bot's current WebSocket health state
 
 #### Scenario: Authorized user requests the task list
 - **WHEN** a Feishu user in the allowed user list invokes the bot's task-list action
@@ -166,3 +171,23 @@ The system SHALL render proactive `checkPDWin11` notifications as informational 
 - **WHEN** an authorized user sends `/cron start TASK_ID` or `/cron stop TASK_ID` for a task whose execution mode is `oneshot`
 - **THEN** the system rejects the request
 - **AND** it returns a task-mode mismatch response stating that the task is not a cronjob task
+
+### Requirement: Feishu-facing timestamps use one canonical display format
+The system SHALL render every human-facing timestamp sent through the Feishu channel in the canonical local-time format `YYYY/MM/DD HH:mm:ss`.
+
+#### Scenario: Run status card includes formatted timestamps
+- **WHEN** the system renders a run status or run milestone card to Feishu
+- **THEN** every displayed run timestamp, including start and finish times when present, uses the format `YYYY/MM/DD HH:mm:ss`
+
+#### Scenario: Health reply includes formatted timestamps
+- **WHEN** the system renders a `/health` response to Feishu and includes any human-facing timestamp fields
+- **THEN** those timestamps use the format `YYYY/MM/DD HH:mm:ss`
+
+#### Scenario: Different Feishu reply paths stay consistent
+- **WHEN** the system sends timestamps to Feishu through different reply paths such as command replies, interactive cards, or proactive monitoring notifications
+- **THEN** every human-facing timestamp uses the same `YYYY/MM/DD HH:mm:ss` format rather than mixing ISO and local display styles
+
+#### Scenario: Protocol-layer timestamps are out of scope
+- **WHEN** the system exchanges requests, responses, or callback payloads with the Feishu server-side API
+- **THEN** this display-format rule does not require changing any protocol-layer timestamp field
+- **AND** only timestamps rendered into the Feishu chat UI for human readers are subject to the canonical format

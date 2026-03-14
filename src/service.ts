@@ -1,4 +1,5 @@
 import type {
+  AppHealthSnapshot,
   BotConfig,
   CardResponse,
   EventLogEntry,
@@ -15,6 +16,7 @@ import {
   buildCronStatusCard,
   buildCronTaskListCard,
   buildErrorCard,
+  buildHealthCard,
   buildHelpCard,
   buildRunStatusCard,
   buildTaskListCard,
@@ -157,6 +159,7 @@ export class KidsAlfredService {
   private repository: RunRepository;
   private runtime: TaskRuntime;
   private readonly cronController: CronController;
+  private healthSnapshotProvider?: () => AppHealthSnapshot;
 
   constructor(
     config: BotConfig,
@@ -184,6 +187,10 @@ export class KidsAlfredService {
 
   getBotId(): string {
     return this.botId;
+  }
+
+  setHealthSnapshotProvider(provider: () => AppHealthSnapshot): void {
+    this.healthSnapshotProvider = provider;
   }
 
   claimIngressEvent(eventKey: string, eventType: string): boolean {
@@ -422,6 +429,17 @@ export class KidsAlfredService {
         });
         return response;
       }
+      if (trimmed === '/health') {
+        const response = this.getHealth(actorId);
+        await this.logEvent({
+          actorId,
+          chatId: context.chatId,
+          eventType: 'im.message.receive_v1',
+          commandType: 'health',
+          decision: 'status_returned',
+        });
+        return response;
+      }
       if (trimmed === '/cron list' || trimmed === '/cron status') {
         const response =
           trimmed === '/cron list'
@@ -526,7 +544,7 @@ export class KidsAlfredService {
         return response;
       }
       const response = buildErrorCard(
-        'Unsupported command. Use /help, /tasks, /run TASK_ID key=value ..., /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.',
+        'Unsupported command. Use /help, /health, /tasks, /run TASK_ID key=value ..., /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.',
       );
       await this.logEvent({
         actorId,
@@ -675,6 +693,14 @@ export class KidsAlfredService {
     }
   }
 
+  private getHealth(actorId: string): CardResponse {
+    this.ensureAuthorized(actorId);
+    if (!this.healthSnapshotProvider) {
+      throw new Error('Health snapshot is not configured for this bot');
+    }
+    return buildHealthCard(this.healthSnapshotProvider());
+  }
+
   private getTask(taskId: string) {
     const task = this.config.tasks[taskId];
     if (!task) {
@@ -719,6 +745,9 @@ export class KidsAlfredService {
   private detectMessageCommandType(text: string): string {
     if (text === '/help') {
       return 'help';
+    }
+    if (text === '/health') {
+      return 'health';
     }
     if (text === '/tasks') {
       return 'tasks';

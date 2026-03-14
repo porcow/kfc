@@ -1,21 +1,30 @@
 import { execFile, spawn } from 'node:child_process';
-import { access, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import process from 'node:process';
+import readline from 'node:readline/promises';
 import * as sdk from '@larksuiteoapi/node-sdk';
 
-import { defaultConfigPath } from './config/paths.ts';
+import { defaultBotWorkingDirectory, defaultConfigPath } from './config/paths.ts';
 import { loadConfig, validateParameters } from './config/schema.ts';
-import type { BotConfig, TaskDefinition, TaskNotificationIntent, TaskResult, TaskTool } from './domain.ts';
+import { buildLaunchdLabel, cronLaunchdPlistPath } from './cron.ts';
+import type {
+  AppHealthSnapshot,
+  BotConfig,
+  TaskDefinition,
+  TaskNotificationIntent,
+  TaskResult,
+  TaskTool,
+} from './domain.ts';
 import { authorizePairing, invokeLocalReload } from './pairing.ts';
 import { createBuiltinToolRegistry } from './tools/index.ts';
 import { RunRepository } from './persistence/run-repository.ts';
 
 const execFileAsync = promisify(execFile);
 const SERVICE_LABEL = 'com.kidsalfred.service';
-const SERVICE_INSTALL_HINT = 'Service is not installed. Run: kfc service install --config /path/to/bot.toml';
+const SERVICE_INSTALL_HINT = 'Service is not installed. Run: kfc service install [--config /path/to/bot.toml]';
 
 export interface KfcServiceManager {
   install(configPath: string): Promise<void>;
@@ -29,8 +38,26 @@ export interface KfcCliDeps {
   serviceManager: KfcServiceManager;
   pairAuthorizer: (pairCode: string) => Promise<{ actorId: string; changed: boolean }>;
   taskExecutor: (botId: string, taskId: string) => Promise<TaskResult>;
+  healthReader: () => Promise<AppHealthSnapshot>;
+  confirmFullUninstall: (prompt: string) => Promise<boolean>;
+  fullUninstaller: () => Promise<void>;
   stdout: { write(value: string): void };
   stderr: { write(value: string): void };
+}
+
+interface LaunchdServiceManagerOptions {
+  execFileAsync?: typeof execFileAsync;
+  access?: typeof access;
+  readFile?: typeof readFile;
+  unlink?: typeof unlink;
+  loadConfig?: typeof loadConfig;
+}
+
+export interface CronCleanupTarget {
+  botId: string;
+  taskId: string;
+  label: string;
+  plistPath: string;
 }
 
 interface ExecuteConfiguredTaskOptions {
@@ -41,50 +68,195 @@ interface ExecuteConfiguredTaskOptions {
   ) => Promise<void>;
 }
 
-class LaunchdServiceManager implements KfcServiceManager {
+export class LaunchdServiceManager implements KfcServiceManager {
+  private readonly execFileAsyncImpl: typeof execFileAsync;
+  private readonly accessImpl: typeof access;
+  private readonly readFileImpl: typeof readFile;
+  private readonly unlinkImpl: typeof unlink;
+  private readonly loadConfigImpl: typeof loadConfig;
+
+  constructor(options: LaunchdServiceManagerOptions = {}) {
+    this.execFileAsyncImpl = options.execFileAsync ?? execFileAsync;
+    this.accessImpl = options.access ?? access;
+    this.readFileImpl = options.readFile ?? readFile;
+    this.unlinkImpl = options.unlink ?? unlink;
+    this.loadConfigImpl = options.loadConfig ?? loadConfig;
+  }
+
   async install(configPath: string): Promise<void> {
     const plistPath = await writeServicePlist(configPath);
-    await execFileAsync('launchctl', ['bootout', `gui/${process.getuid()}`, plistPath]).catch(
+    await this.execFileAsyncImpl('launchctl', ['bootout', `gui/${process.getuid()}`, plistPath]).catch(
       () => undefined,
     );
-    await execFileAsync('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath]);
-    await execFileAsync('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${SERVICE_LABEL}`]);
+    await this.execFileAsyncImpl('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath]);
+    await this.execFileAsyncImpl('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${SERVICE_LABEL}`]);
   }
 
   async uninstall(): Promise<void> {
     const plistPath = servicePlistPath();
-    if (!(await isServiceInstalled())) {
+    if (!(await isServiceInstalled(this.accessImpl))) {
       return;
     }
-    await execFileAsync('launchctl', ['bootout', `gui/${process.getuid()}/${SERVICE_LABEL}`]).catch(
+    const cleanupErrors: string[] = [];
+    const installedConfigPath = await readInstalledServiceConfigPath(
+      plistPath,
+      this.readFileImpl,
+    ).catch((error) => {
+      cleanupErrors.push(
+        `Unable to resolve installed config for cron cleanup: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return undefined;
+    });
+    if (installedConfigPath) {
+      const cronTargets = await listCronCleanupTargets(installedConfigPath, this.loadConfigImpl).catch(
+        (error) => {
+          cleanupErrors.push(
+            `Unable to enumerate configured cronjobs from ${installedConfigPath}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return [];
+        },
+      );
+      cleanupErrors.push(
+        ...(await cleanupCronLaunchdJobs(cronTargets, {
+          execFileAsync: this.execFileAsyncImpl,
+          unlink: this.unlinkImpl,
+        })),
+      );
+    }
+
+    await this.execFileAsyncImpl('launchctl', ['bootout', `gui/${process.getuid()}/${SERVICE_LABEL}`]).catch(
       () => undefined,
     );
-    await unlink(plistPath).catch(() => undefined);
+    await this.unlinkImpl(plistPath).catch(() => undefined);
+    if (cleanupErrors.length > 0) {
+      throw new Error(`Service uninstalled with cron cleanup issues:\n- ${cleanupErrors.join('\n- ')}`);
+    }
   }
 
   async start(): Promise<void> {
-    const plistPath = await ensureInstalledService();
-    await execFileAsync('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath]).catch(
+    const plistPath = await ensureInstalledService(this.accessImpl);
+    await this.execFileAsyncImpl('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath]).catch(
       () => undefined,
     );
-    await execFileAsync('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${SERVICE_LABEL}`]);
+    await this.execFileAsyncImpl('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${SERVICE_LABEL}`]);
   }
 
   async restart(): Promise<void> {
-    const plistPath = await ensureInstalledService();
-    await execFileAsync('launchctl', ['bootout', `gui/${process.getuid()}/${SERVICE_LABEL}`]).catch(
+    const plistPath = await ensureInstalledService(this.accessImpl);
+    await this.execFileAsyncImpl('launchctl', ['bootout', `gui/${process.getuid()}/${SERVICE_LABEL}`]).catch(
       () => undefined,
     );
-    await execFileAsync('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath]).catch(
+    await this.execFileAsyncImpl('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath]).catch(
       () => undefined,
     );
-    await execFileAsync('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${SERVICE_LABEL}`]);
+    await this.execFileAsyncImpl('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${SERVICE_LABEL}`]);
   }
 
   async stop(): Promise<void> {
-    await ensureInstalledService();
-    await execFileAsync('launchctl', ['bootout', `gui/${process.getuid()}/${SERVICE_LABEL}`]).catch(() => undefined);
+    await ensureInstalledService(this.accessImpl);
+    await this.execFileAsyncImpl('launchctl', ['bootout', `gui/${process.getuid()}/${SERVICE_LABEL}`]).catch(() => undefined);
   }
+}
+
+async function confirmInteractive(prompt: string): Promise<boolean> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = (await rl.question(prompt)).trim().toLowerCase();
+    return answer === 'y' || answer === 'yes';
+  } finally {
+    rl.close();
+  }
+}
+
+function installedAppRoot(): string {
+  const home = process.env.HOME ?? process.cwd();
+  return join(home, '.local', 'share', 'kfc');
+}
+
+function installedLauncherPath(): string {
+  const home = process.env.HOME ?? process.cwd();
+  return join(home, '.local', 'bin', 'kfc');
+}
+
+function installedConfigPath(): string {
+  const home = process.env.HOME ?? process.cwd();
+  return join(home, '.config', 'kfc', 'config.toml');
+}
+
+function mainLaunchdLabel(): string {
+  return SERVICE_LABEL;
+}
+
+async function bootoutLaunchdPlist(
+  plistPath: string,
+  label: string,
+  execImpl: typeof execFileAsync = execFileAsync,
+): Promise<void> {
+  await execImpl('launchctl', ['bootout', `gui/${process.getuid()}/${label}`]).catch(() => undefined);
+  await execImpl('launchctl', ['bootout', `gui/${process.getuid()}`, plistPath]).catch(() => undefined);
+}
+
+async function removeIfExists(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true }).catch((error) => {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  });
+}
+
+async function listFallbackCronPlists(root: string): Promise<string[]> {
+  const results: string[] = [];
+  async function walk(directory: string): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+        return;
+      }
+      throw error;
+    }
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await walk(path);
+        continue;
+      }
+      if (entry.isFile() && path.includes('/launchd/') && path.endsWith('.plist')) {
+        results.push(path);
+      }
+    }
+  }
+  await walk(root);
+  return results;
+}
+
+async function performFullUninstall(serviceManager: KfcServiceManager): Promise<void> {
+  await serviceManager.uninstall().catch(() => undefined);
+
+  const plistPath = servicePlistPath();
+  await bootoutLaunchdPlist(plistPath, mainLaunchdLabel()).catch(() => undefined);
+  await unlink(plistPath).catch(() => undefined);
+
+  const workDir = defaultBotWorkingDirectory();
+  const fallbackCronPlists = await listFallbackCronPlists(workDir);
+  for (const cronPlist of fallbackCronPlists) {
+    await execFileAsync('launchctl', ['bootout', `gui/${process.getuid()}`, cronPlist]).catch(() => undefined);
+    await unlink(cronPlist).catch(() => undefined);
+  }
+
+  await removeIfExists(installedAppRoot());
+  await removeIfExists(workDir);
+  await removeIfExists(installedLauncherPath());
+  await removeIfExists(installedConfigPath());
 }
 
 function parseFlags(tokens: string[]): Record<string, string> {
@@ -341,21 +513,89 @@ function servicePlistPath(): string {
   return join(home, 'Library', 'LaunchAgents', `${SERVICE_LABEL}.plist`);
 }
 
-async function isServiceInstalled(): Promise<boolean> {
+async function isServiceInstalled(accessImpl: typeof access = access): Promise<boolean> {
   try {
-    await access(servicePlistPath(), constants.F_OK);
+    await accessImpl(servicePlistPath(), constants.F_OK);
     return true;
   } catch {
     return false;
   }
 }
 
-async function ensureInstalledService(): Promise<string> {
+async function ensureInstalledService(accessImpl: typeof access = access): Promise<string> {
   const plistPath = servicePlistPath();
-  if (!(await isServiceInstalled())) {
+  if (!(await isServiceInstalled(accessImpl))) {
     throw new Error(SERVICE_INSTALL_HINT);
   }
   return plistPath;
+}
+
+export async function readInstalledServiceConfigPath(
+  plistPath: string = servicePlistPath(),
+  readFileImpl: typeof readFile = readFile,
+): Promise<string> {
+  const plist = await readFileImpl(plistPath, 'utf8');
+  const match = plist.match(/<key>KIDS_ALFRED_CONFIG<\/key>\s*<string>([^<]+)<\/string>/u);
+  if (!match?.[1]) {
+    throw new Error(`Installed service plist does not declare KIDS_ALFRED_CONFIG: ${plistPath}`);
+  }
+  return match[1];
+}
+
+export async function listCronCleanupTargets(
+  configPath: string,
+  loadConfigImpl: typeof loadConfig = loadConfig,
+): Promise<CronCleanupTarget[]> {
+  const config = await loadConfigImpl(configPath);
+  const targets: CronCleanupTarget[] = [];
+  for (const bot of Object.values(config.bots)) {
+    for (const task of Object.values(bot.tasks)) {
+      if (task.executionMode !== 'cronjob') {
+        continue;
+      }
+      targets.push({
+        botId: bot.botId,
+        taskId: task.id,
+        label: buildLaunchdLabel(bot.botId, task.id),
+        plistPath: cronLaunchdPlistPath(bot.storage.sqlitePath, bot.botId, task.id),
+      });
+    }
+  }
+  return targets;
+}
+
+export async function cleanupCronLaunchdJobs(
+  targets: CronCleanupTarget[],
+  options: {
+    execFileAsync?: typeof execFileAsync;
+    unlink?: typeof unlink;
+  } = {},
+): Promise<string[]> {
+  const execImpl = options.execFileAsync ?? execFileAsync;
+  const unlinkImpl = options.unlink ?? unlink;
+  const cleanupErrors: string[] = [];
+  for (const target of targets) {
+    await execImpl('launchctl', ['bootout', `gui/${process.getuid()}`, target.plistPath]).catch(
+      (error) => {
+        cleanupErrors.push(
+          `Failed to unload cronjob ${target.label}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      },
+    );
+    await unlinkImpl(target.plistPath).catch((error: unknown) => {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+        return;
+      }
+      cleanupErrors.push(
+        `Failed to remove cronjob plist ${target.plistPath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  }
+  return cleanupErrors;
 }
 
 async function resolveServiceInstallConfigPath(explicitPath?: string): Promise<string> {
@@ -373,9 +613,37 @@ async function resolveServiceInstallConfigPath(explicitPath?: string): Promise<s
   return configPath;
 }
 
+async function resolveHealthConfigPath(): Promise<string> {
+  if (await isServiceInstalled()) {
+    return await readInstalledServiceConfigPath();
+  }
+  return defaultConfigPath();
+}
+
+async function readServiceHealth(): Promise<AppHealthSnapshot> {
+  const configPath = await resolveHealthConfigPath();
+  const config = await loadConfig(configPath);
+  const url = new URL(config.server.healthPath, `http://127.0.0.1:${config.server.port}`);
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch (error) {
+    throw new Error(
+      `Unable to reach local health endpoint at ${url.toString()}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (!response.ok) {
+    throw new Error(`Health endpoint returned ${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as AppHealthSnapshot;
+}
+
 function createDefaultDeps(): KfcCliDeps {
+  const serviceManager = new LaunchdServiceManager();
   return {
-    serviceManager: new LaunchdServiceManager(),
+    serviceManager,
     pairAuthorizer: async (pairCode) => {
       const configPath = defaultConfigPath();
       const config = await loadConfig(configPath);
@@ -391,6 +659,9 @@ function createDefaultDeps(): KfcCliDeps {
       });
     },
     taskExecutor: async (botId, taskId) => await executeConfiguredTask(defaultConfigPath(), botId, taskId),
+    healthReader: async () => await readServiceHealth(),
+    confirmFullUninstall: async (prompt) => await confirmInteractive(prompt),
+    fullUninstaller: async () => await performFullUninstall(serviceManager),
     stdout: process.stdout,
     stderr: process.stderr,
   };
@@ -426,6 +697,28 @@ export async function runKfcCli(argv: string[], deps: KfcCliDeps = createDefault
         default:
           throw new Error('Usage: kfc service <install|uninstall|start|restart|stop>');
       }
+    }
+
+    if (command === 'health') {
+      const snapshot = await deps.healthReader();
+      deps.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+      return 0;
+    }
+
+    if (command === 'uninstall') {
+      const flags = parseFlags(rest);
+      const confirmed = flags['--yes'] === 'true'
+        ? true
+        : await deps.confirmFullUninstall(
+            'This will remove the installed app, launcher, config, work directory, and launchd state. Continue? [y/N] ',
+          );
+      if (!confirmed) {
+        deps.stdout.write('Uninstall cancelled\n');
+        return 0;
+      }
+      await deps.fullUninstaller();
+      deps.stdout.write('Uninstalled kfc\n');
+      return 0;
     }
 
     if (command === 'pair') {
@@ -470,7 +763,7 @@ export async function runKfcCli(argv: string[], deps: KfcCliDeps = createDefault
       return 0;
     }
 
-    throw new Error('Usage: kfc <service|pair|exec> ...');
+    throw new Error('Usage: kfc <service|health|pair|exec|uninstall> ...');
   } catch (error) {
     deps.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     return 1;

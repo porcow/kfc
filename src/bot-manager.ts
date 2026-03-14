@@ -1,6 +1,7 @@
 import type { AppConfig, BotWebSocketHealth, ReloadResult, RouteKind, RunUpdateSink } from './domain.ts';
 import { loadConfig } from './config/schema.ts';
 import { createFeishuSdkBridge, type BotBridge } from './feishu/sdk.ts';
+import { buildHealthSnapshot } from './health.ts';
 import { KidsAlfredService, MemoryRunUpdateSink } from './service.ts';
 import { LaunchdCronController, type CronController } from './cron.ts';
 import { RunRepository } from './persistence/run-repository.ts';
@@ -48,6 +49,10 @@ export class BotManager {
 
   getConfig(): AppConfig {
     return this.config;
+  }
+
+  getLoadedAt(): string {
+    return this.config.loadedAt;
   }
 
   listBotIds(): string[] {
@@ -119,6 +124,7 @@ export class BotManager {
       for (const [botId, runtime] of nextRuntimes.entries()) {
         this.runtimes.set(botId, runtime);
       }
+      this.attachHealthProviders();
 
       await Promise.allSettled(
         [...previousRuntimes.values()].map(async (runtime) => {
@@ -180,6 +186,7 @@ export class BotManager {
     for (const [botId, runtime] of runtimes.entries()) {
       this.runtimes.set(botId, runtime);
     }
+    this.attachHealthProviders();
   }
 
   private async buildRuntimes(config: AppConfig): Promise<Map<string, BotRuntime>> {
@@ -202,5 +209,11 @@ export class BotManager {
       });
     }
     return runtimes;
+  }
+
+  private attachHealthProviders(): void {
+    for (const runtime of this.runtimes.values()) {
+      runtime.service.setHealthSnapshotProvider(() => buildHealthSnapshot(this));
+    }
   }
 }

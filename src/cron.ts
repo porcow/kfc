@@ -286,7 +286,7 @@ export class LaunchdCronController implements CronController {
   private plistPathFor(taskId: string): string {
     const dir = join(dirname(this.config.storage.sqlitePath), 'launchd');
     mkdirSync(dir, { recursive: true });
-    return join(dir, `${buildLaunchdLabel(this.config.botId, taskId)}.plist`);
+    return cronLaunchdPlistPath(this.config.storage.sqlitePath, this.config.botId, taskId);
   }
 
   private writePlist(task: TaskDefinition): string {
@@ -318,6 +318,10 @@ export class LaunchdCronController implements CronController {
 
 export function buildLaunchdLabel(botId: string, taskId: string): string {
   return `com.kidsalfred.${botId}.${taskId}`;
+}
+
+export function cronLaunchdPlistPath(sqlitePath: string, botId: string, taskId: string): string {
+  return join(dirname(sqlitePath), 'launchd', `${buildLaunchdLabel(botId, taskId)}.plist`);
 }
 
 function buildLaunchdPlist(input: {

@@ -2,6 +2,7 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 
 import type { BotManager } from '../bot-manager.ts';
 import { createHealthServer } from '../feishu/sdk.ts';
+import { buildHealthSnapshot } from '../health.ts';
 import { LOCAL_RELOAD_PATH } from '../pairing.ts';
 
 function sendJson(response: ServerResponse, statusCode: number, body: Record<string, unknown>): void {
@@ -36,14 +37,7 @@ export async function createAppServer(
   const requestHandler = async (request: IncomingMessage, response: ServerResponse) => {
     const path = new URL(request.url ?? '/', 'http://localhost').pathname;
     if (path === manager.getConfig().server.healthPath) {
-      const websocket = manager.getBotWebSocketHealth();
-      sendJson(response, 200, {
-        ok: true,
-        loadedAt: manager.getConfig().loadedAt,
-        bots: manager.listBotIds(),
-        websocket,
-        ready: Object.values(websocket).every((health) => health.state === 'connected'),
-      });
+      sendJson(response, 200, buildHealthSnapshot(manager));
       return;
     }
 

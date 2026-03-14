@@ -78,7 +78,7 @@ The system SHALL continue evaluating current uptime during `on -> on` observatio
 - **AND** the card title is `MC 已运行 <formatted duration>`
 
 ### Requirement: Notification content includes readable lifecycle timing information
-The system SHALL render `checkPDWin11` notification timestamps in `YYYY/MM/DD HH:mm:ss` host-local format and include human-readable runtime durations in the card body.
+The system SHALL render `checkPDWin11` notification timestamps in the same canonical Feishu timestamp format `YYYY/MM/DD HH:mm:ss` using host-local time, and SHALL include human-readable runtime durations in the card body.
 
 #### Scenario: Startup notification includes formatted start time and current runtime
 - **WHEN** the tool emits a startup notification for an `off -> on` transition
