@@ -1,0 +1,9 @@
+node_modules
+dist
+build
+coverage
+target
+.venv
+__pycache__
+*.log
+*.lock
