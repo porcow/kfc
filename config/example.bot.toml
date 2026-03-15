@@ -63,4 +63,5 @@ schedule = "*/1 * * * *"
 auto_start = false
 
 [bots.ops.tasks.check-pd-win11.config]
+# checkPDWin11 resolves this VM name through Parallels Desktop's prlctl CLI.
 vm_name_match = "Windows 11"

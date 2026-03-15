@@ -1,6 +1,3 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
 import type {
   BuiltinToolTaskDefinition,
   PDWin11MonitorState,
@@ -8,17 +5,11 @@ import type {
   TaskTool,
 } from '../domain.ts';
 import { formatFeishuTimestamp } from '../feishu/timestamp.ts';
-
-const execFileAsync = promisify(execFile);
-const LSTART_LENGTH = 24;
-
-export interface ObservedProcess {
-  command: string;
-  startedAt?: string;
-}
+import { createPrlctlParallelsVmClient } from './parallels.ts';
+import type { ParallelsVmInspection } from './parallels.ts';
 
 interface CheckPDWin11Deps {
-  listProcesses?: () => Promise<ObservedProcess[]>;
+  inspectVm?: (name: string) => Promise<ParallelsVmInspection>;
   now?: () => Date;
 }
 
@@ -39,60 +30,14 @@ function formatDuration(totalMs: number): string {
   return parts.join('');
 }
 
-function parsePsOutput(stdout: string): ObservedProcess[] {
-  return stdout
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .filter(Boolean)
-    .map((line) => {
-      const header = line.slice(0, LSTART_LENGTH).trim();
-      const command = line.slice(LSTART_LENGTH).trim();
-      const parsed = header ? new Date(header) : undefined;
-      return {
-        command,
-        startedAt:
-          parsed && !Number.isNaN(parsed.valueOf()) ? parsed.toISOString() : undefined,
-      };
-    });
-}
-
-async function listProcesses(): Promise<ObservedProcess[]> {
-  const { stdout } = await execFileAsync('ps', ['-axo', 'lstart=,command=']);
-  return parsePsOutput(stdout);
-}
-
 function resolveConfig(task: BuiltinToolTaskDefinition): {
   vmNameMatch: string;
 } {
   const vmNameMatch = task.config?.vm_name_match;
   return {
-    vmNameMatch: typeof vmNameMatch === 'string' && vmNameMatch.trim() ? vmNameMatch : 'Windows 11',
+    vmNameMatch:
+      typeof vmNameMatch === 'string' && vmNameMatch.trim() ? vmNameMatch : 'Windows 11',
   };
-}
-
-function findMatchingProcess(
-  processes: ObservedProcess[],
-  vmNameMatch: string,
-): ObservedProcess | undefined {
-  const vmNameFlag = `--vm-name ${vmNameMatch}`;
-  const matches = processes
-    .filter(
-      (process) =>
-        process.command.includes('prl_vm_app') && process.command.includes(vmNameFlag),
-    )
-    .sort((left, right) => {
-      const leftTime = left.startedAt ? Date.parse(left.startedAt) : Number.POSITIVE_INFINITY;
-      const rightTime = right.startedAt ? Date.parse(right.startedAt) : Number.POSITIVE_INFINITY;
-      return leftTime - rightTime;
-    });
-
-  if (matches.length === 0) {
-    return undefined;
-  }
-  if (!matches[0].startedAt) {
-    throw new Error('Unable to parse Windows 11 process start time');
-  }
-  return matches[0];
 }
 
 function buildStartupResult(startTime: string, observedAt: string): TaskResult {
@@ -140,8 +85,9 @@ function buildRuntimeReminderResult(startTime: string, observedAt: string): Task
 }
 
 export function createCheckPDWin11Tool(deps: CheckPDWin11Deps = {}): TaskTool {
-  const loadProcesses = deps.listProcesses ?? listProcesses;
   const now = deps.now ?? (() => new Date());
+  const client = deps.inspectVm ? undefined : createPrlctlParallelsVmClient({ now });
+  const inspectVmByName = deps.inspectVm ?? client!.inspectVmByName.bind(client);
 
   return {
     id: 'checkPDWin11',
@@ -158,9 +104,9 @@ export function createCheckPDWin11Tool(deps: CheckPDWin11Deps = {}): TaskTool {
       const { vmNameMatch } = resolveConfig(task);
       const observedAt = now().toISOString();
       const existing = context.pdWin11StateStore.getPDWin11State(task.id);
-      const matchingProcess = findMatchingProcess(await loadProcesses(), vmNameMatch);
+      const inspectedVm = await inspectVmByName(vmNameMatch);
 
-      if (!matchingProcess) {
+      if (inspectedVm.state === 'off') {
         if (!existing) {
           context.pdWin11StateStore.savePDWin11State(task.id, {
             state: 'off',
@@ -190,23 +136,20 @@ export function createCheckPDWin11Tool(deps: CheckPDWin11Deps = {}): TaskTool {
         };
       }
 
-      if (!matchingProcess.startedAt) {
-        throw new Error('Unable to parse Windows 11 process start time');
-      }
-
       if (!existing || existing.state === 'off') {
+        const startTime = observedAt;
         const nextState: PDWin11MonitorState = {
           state: 'on',
-          detectedStartAt: matchingProcess.startedAt,
+          detectedStartAt: startTime,
           lastTransitionAt: observedAt,
           lastNotificationAt: observedAt,
           lastRuntimeReminderAt: undefined,
         };
         context.pdWin11StateStore.savePDWin11State(task.id, nextState);
-        return buildStartupResult(matchingProcess.startedAt, observedAt);
+        return buildStartupResult(startTime, observedAt);
       }
 
-      const startTime = existing.detectedStartAt ?? matchingProcess.startedAt;
+      const startTime = existing.detectedStartAt ?? inspectedVm.detectedStartAt ?? observedAt;
       const uptimeMs = Date.parse(observedAt) - Date.parse(startTime);
       if (uptimeMs >= RUNTIME_REMINDER_THRESHOLD_MS) {
         const lastReminderMs = existing.lastRuntimeReminderAt

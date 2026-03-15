@@ -4,19 +4,19 @@ Define the built-in Windows 11 Parallels monitor behavior, its persisted state m
 ## Requirements
 
 ### Requirement: The system provides a built-in Parallels Windows 11 monitor tool
-The system SHALL provide a built-in tool `checkPDWin11` that inspects the macOS host process list for a Parallels Desktop Windows 11 VM instance.
+The system SHALL provide a built-in tool `checkPDWin11` that inspects the Parallels Desktop VM named `Windows 11` through the shared `prlctl`-backed Parallels integration rather than by scanning the macOS host process list.
 
-#### Scenario: Matching Windows 11 VM process is present
-- **WHEN** the tool runs and finds at least one process-list entry that matches the configured Parallels Windows 11 VM detection rule
+#### Scenario: Windows 11 VM is reported as running by Parallels CLI
+- **WHEN** the tool runs and the shared Parallels integration reports that the configured `Windows 11` VM is currently running
 - **THEN** the tool treats the VM as currently running
-- **AND** it selects a parseable process start time for that observation
+- **AND** it uses the normalized Parallels inspection result for any timing metadata available to the monitor
 
-#### Scenario: No matching Windows 11 VM process is present
-- **WHEN** the tool runs and finds no process-list entries that match the configured Parallels Windows 11 VM detection rule
+#### Scenario: Windows 11 VM is reported as not running by Parallels CLI
+- **WHEN** the tool runs and the shared Parallels integration reports that the configured `Windows 11` VM is not currently running
 - **THEN** the tool treats the VM as currently off
 
-#### Scenario: Start time cannot be parsed from a matching process
-- **WHEN** the tool finds a matching process entry but cannot parse a valid start time from the selected observation
+#### Scenario: Parallels CLI inspection fails
+- **WHEN** the tool cannot obtain a usable inspection result because `prlctl` is unavailable, the VM cannot be resolved, or the CLI response cannot be normalized
 - **THEN** the tool fails that invocation
 - **AND** it does not change the persisted monitor state
 - **AND** it does not emit a lifecycle or runtime reminder notification

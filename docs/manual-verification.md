@@ -66,6 +66,7 @@
 26. Send `/run TASK_ID ...` for a cronjob task and confirm the bot replies with a mode-mismatch message directing you to `/cron`.
 27. Send `/cron start TASK_ID` for a one-shot task and confirm the bot replies with a mode-mismatch error.
 28. Subscribe one or more chats to `checkPDWin11` with `/cron start check-pd-win11` and confirm:
+   - `prlctl` is available on the host and can resolve the configured `Windows 11` VM by name
    - no notification is sent while the observed VM remains off
    - starting the Windows 11 Parallels VM causes exactly one startup notification card per subscribed chat
    - the startup card title is `MC 启动!`

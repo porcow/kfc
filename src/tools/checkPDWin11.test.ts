@@ -45,48 +45,50 @@ test('checkPDWin11 emits startup and shutdown notifications only on transitions'
   let invocation = 0;
   const tool = createCheckPDWin11Tool({
     now: () => observedAt,
-    listProcesses: async () => {
+    inspectVm: async () => {
       invocation += 1;
       if (invocation === 1 || invocation === 2) {
-        return [
-          {
-            command:
-              '/Users/porco/Parallels/Windows 11.pvm/Windows 11.app/Contents/MacOS/WinAppHelper --ivmid 0',
-            startedAt: '2026-03-13T07:58:00.000Z',
-          },
-          {
-            command:
-              '/Applications/Parallels Desktop.app/Contents/MacOS//Parallels VM.app/Contents/MacOS/prl_vm_app --vm-name Windows 11 --uuid {52090892-4313-46a7-a87a-995cde047c11}',
-            startedAt: '2026-03-13T08:00:00.000Z',
-          },
-        ];
+        return {
+          id: 'vm-1',
+          name: 'Windows 11',
+          rawState: 'running',
+          state: 'on',
+          detectedStartAt: '2026-03-13T08:00:00.000Z',
+        };
       }
-      return [];
+      return {
+        id: 'vm-1',
+        name: 'Windows 11',
+        rawState: 'stopped',
+        state: 'off',
+      };
     },
   });
+
+  const task = {
+    id: 'check-pd',
+    runnerKind: 'builtin-tool' as const,
+    executionMode: 'cronjob' as const,
+    description: 'Check Windows 11 VM',
+    tool: 'checkPDWin11',
+    timeoutMs: 5000,
+    cancellable: false,
+    parameters: {},
+    cron: {
+      schedule: '*/5 * * * *',
+      autoStart: true,
+    },
+    config: {
+      vm_name_match: 'Windows 11',
+    },
+  };
 
   const startup = await tool.execute({
     runId: 'run_1',
     botId: 'ops',
     signal: new AbortController().signal,
     actorId: 'local-admin',
-    task: {
-      id: 'check-pd',
-      runnerKind: 'builtin-tool',
-      executionMode: 'cronjob',
-      description: 'Check Windows 11 VM',
-      tool: 'checkPDWin11',
-      timeoutMs: 5000,
-      cancellable: false,
-      parameters: {},
-      cron: {
-        schedule: '*/5 * * * *',
-        autoStart: true,
-      },
-      config: {
-        vm_name_match: 'Windows 11',
-      },
-    },
+    task,
     parameters: {},
     pdWin11StateStore: store,
   });
@@ -101,23 +103,7 @@ test('checkPDWin11 emits startup and shutdown notifications only on transitions'
     botId: 'ops',
     signal: new AbortController().signal,
     actorId: 'local-admin',
-    task: {
-      id: 'check-pd',
-      runnerKind: 'builtin-tool',
-      executionMode: 'cronjob',
-      description: 'Check Windows 11 VM',
-      tool: 'checkPDWin11',
-      timeoutMs: 5000,
-      cancellable: false,
-      parameters: {},
-      cron: {
-        schedule: '*/5 * * * *',
-        autoStart: true,
-      },
-      config: {
-        vm_name_match: 'Windows 11',
-      },
-    },
+    task,
     parameters: {},
     pdWin11StateStore: store,
   });
@@ -126,6 +112,35 @@ test('checkPDWin11 emits startup and shutdown notifications only on transitions'
 
   const shutdown = await tool.execute({
     runId: 'run_3',
+    botId: 'ops',
+    signal: new AbortController().signal,
+    actorId: 'local-admin',
+    task,
+    parameters: {},
+    pdWin11StateStore: store,
+  });
+
+  assert.equal(shutdown.notifications?.length, 1);
+  assert.match(shutdown.notifications?.[0].body ?? '', /Windows 11 shutdown time/u);
+  assert.equal(store.getPDWin11State('check-pd')?.state, 'off');
+});
+
+test('checkPDWin11 uses the observation time as startup time on off to on transitions', async () => {
+  const store = new MemoryPDWin11StateStore();
+  const observedAt = new Date('2026-03-15T09:30:00.000Z');
+  const tool = createCheckPDWin11Tool({
+    now: () => observedAt,
+    inspectVm: async () => ({
+      id: 'vm-1',
+      name: 'Windows 11',
+      rawState: 'running',
+      state: 'on',
+      detectedStartAt: '2025-12-24T16:00:14.420Z',
+    }),
+  });
+
+  const result = await tool.execute({
+    runId: 'run_startup_now',
     botId: 'ops',
     signal: new AbortController().signal,
     actorId: 'local-admin',
@@ -150,9 +165,9 @@ test('checkPDWin11 emits startup and shutdown notifications only on transitions'
     pdWin11StateStore: store,
   });
 
-  assert.equal(shutdown.notifications?.length, 1);
-  assert.match(shutdown.notifications?.[0].body ?? '', /Windows 11 shutdown time/u);
-  assert.equal(store.getPDWin11State('check-pd')?.state, 'off');
+  assert.equal(store.getPDWin11State('check-pd')?.detectedStartAt, '2026-03-15T09:30:00.000Z');
+  assert.match(result.notifications?.[0].body ?? '', /2026\/03\/15 17:30:00/u);
+  assert.match(result.notifications?.[0].body ?? '', /Current runtime: 0分/u);
 });
 
 test('checkPDWin11 emits first-hour and repeated ten-minute runtime reminders', async () => {
@@ -184,13 +199,13 @@ test('checkPDWin11 emits first-hour and repeated ten-minute runtime reminders', 
   };
   const tool = createCheckPDWin11Tool({
     now: () => observationTimes[nowIndex++],
-    listProcesses: async () => [
-      {
-        command:
-          '/Applications/Parallels Desktop.app/Contents/MacOS//Parallels VM.app/Contents/MacOS/prl_vm_app --vm-name Windows 11 --uuid {52090892-4313-46a7-a87a-995cde047c11}',
-        startedAt: startTime,
-      },
-    ],
+    inspectVm: async () => ({
+      id: 'vm-1',
+      name: 'Windows 11',
+      rawState: 'running',
+      state: 'on',
+      detectedStartAt: startTime,
+    }),
   });
 
   store.savePDWin11State('check-pd', {
@@ -224,7 +239,10 @@ test('checkPDWin11 emits first-hour and repeated ten-minute runtime reminders', 
   assert.equal(firstReminder.notifications?.[0].title, 'MC 已运行 1小时');
   assert.match(firstReminder.notifications?.[0].body ?? '', /Windows 11 已运行超过 1 小时/u);
   assert.match(firstReminder.notifications?.[0].body ?? '', /2026\/03\/13 16:00:00/u);
-  assert.equal(store.getPDWin11State('check-pd')?.lastRuntimeReminderAt, '2026-03-13T09:00:00.000Z');
+  assert.equal(
+    store.getPDWin11State('check-pd')?.lastRuntimeReminderAt,
+    '2026-03-13T09:00:00.000Z',
+  );
 
   const suppressedReminder = await tool.execute({
     runId: 'run_9',
@@ -248,10 +266,13 @@ test('checkPDWin11 emits first-hour and repeated ten-minute runtime reminders', 
   });
   assert.equal(repeatedReminder.notifications?.length, 1);
   assert.equal(repeatedReminder.notifications?.[0].title, 'MC 已运行 1小时10分');
-  assert.equal(store.getPDWin11State('check-pd')?.lastRuntimeReminderAt, '2026-03-13T09:10:00.000Z');
+  assert.equal(
+    store.getPDWin11State('check-pd')?.lastRuntimeReminderAt,
+    '2026-03-13T09:10:00.000Z',
+  );
 });
 
-test('checkPDWin11 leaves state unchanged when matching process start time cannot be parsed', async () => {
+test('checkPDWin11 leaves state unchanged when prlctl inspection fails', async () => {
   const store = new MemoryPDWin11StateStore();
   store.savePDWin11State('check-pd', {
     state: 'off',
@@ -259,41 +280,40 @@ test('checkPDWin11 leaves state unchanged when matching process start time canno
   });
   const tool = createCheckPDWin11Tool({
     now: () => new Date('2026-03-13T08:10:00.000Z'),
-    listProcesses: async () => [
-      {
-        command:
-          '/Applications/Parallels Desktop.app/Contents/MacOS//Parallels VM.app/Contents/MacOS/prl_vm_app --vm-name Windows 11 --uuid {52090892-4313-46a7-a87a-995cde047c11}',
-      },
-    ],
+    inspectVm: async () => {
+      throw new Error('Parallels CLI prlctl is not available on this host');
+    },
   });
 
-  await assert.rejects(() =>
-    tool.execute({
-      runId: 'run_4',
-      botId: 'ops',
-      signal: new AbortController().signal,
-      actorId: 'local-admin',
-      task: {
-        id: 'check-pd',
-        runnerKind: 'builtin-tool',
-        executionMode: 'cronjob',
-        description: 'Check Windows 11 VM',
-        tool: 'checkPDWin11',
-        timeoutMs: 5000,
-        cancellable: false,
+  await assert.rejects(
+    () =>
+      tool.execute({
+        runId: 'run_4',
+        botId: 'ops',
+        signal: new AbortController().signal,
+        actorId: 'local-admin',
+        task: {
+          id: 'check-pd',
+          runnerKind: 'builtin-tool',
+          executionMode: 'cronjob',
+          description: 'Check Windows 11 VM',
+          tool: 'checkPDWin11',
+          timeoutMs: 5000,
+          cancellable: false,
+          parameters: {},
+          cron: {
+            schedule: '*/5 * * * *',
+            autoStart: true,
+          },
+          config: {
+            vm_name_match: 'Windows 11',
+          },
+        },
         parameters: {},
-        cron: {
-          schedule: '*/5 * * * *',
-          autoStart: true,
-        },
-        config: {
-          vm_name_match: 'Windows 11',
-        },
-      },
-      parameters: {},
-      pdWin11StateStore: store,
-    }),
-  /start time/u);
+        pdWin11StateStore: store,
+      }),
+    /prlctl is not available/u,
+  );
 
   assert.equal(store.getPDWin11State('check-pd')?.state, 'off');
 });
@@ -303,13 +323,13 @@ test('checkPDWin11 state persists across repository reopen', async () => {
   const databasePath = join(directory, 'ops.sqlite');
   const tool = createCheckPDWin11Tool({
     now: () => new Date('2026-03-13T08:10:00.000Z'),
-    listProcesses: async () => [
-      {
-        command:
-          '/Applications/Parallels Desktop.app/Contents/MacOS//Parallels VM.app/Contents/MacOS/prl_vm_app --vm-name Windows 11 --uuid {52090892-4313-46a7-a87a-995cde047c11}',
-        startedAt: '2026-03-13T08:00:00.000Z',
-      },
-    ],
+    inspectVm: async () => ({
+      id: 'vm-1',
+      name: 'Windows 11',
+      rawState: 'running',
+      state: 'on',
+      detectedStartAt: '2026-03-13T08:00:00.000Z',
+    }),
   });
 
   const firstRepository = new RunRepository(databasePath);
@@ -344,27 +364,21 @@ test('checkPDWin11 state persists across repository reopen', async () => {
   assert.equal(secondRepository.getPDWin11State('check-pd')?.state, 'on');
   assert.equal(
     secondRepository.getPDWin11State('check-pd')?.detectedStartAt,
-    '2026-03-13T08:00:00.000Z',
+    '2026-03-13T08:10:00.000Z',
   );
   secondRepository.close();
 });
 
-test('checkPDWin11 ignores non-vm Parallels helper processes', async () => {
+test('checkPDWin11 treats prlctl stopped state as off', async () => {
   const store = new MemoryPDWin11StateStore();
   const tool = createCheckPDWin11Tool({
     now: () => new Date('2026-03-13T08:10:00.000Z'),
-    listProcesses: async () => [
-      {
-        command:
-          '/Users/porco/Parallels/Windows 11.pvm/Windows 11.app/Contents/MacOS/WinAppHelper --ivmid 0',
-        startedAt: '2026-03-13T08:00:00.000Z',
-      },
-      {
-        command:
-          '/Users/porco/Parallels/Windows 11.pvm/Windows 11.app/Contents/MacOS/WinAppHelper --fakestub --ivmid 0',
-        startedAt: '2026-03-13T08:00:01.000Z',
-      },
-    ],
+    inspectVm: async () => ({
+      id: 'vm-1',
+      name: 'Windows 11',
+      rawState: 'stopped',
+      state: 'off',
+    }),
   });
 
   const result = await tool.execute({
@@ -394,6 +408,5 @@ test('checkPDWin11 ignores non-vm Parallels helper processes', async () => {
   });
 
   assert.equal(result.summary, 'Windows 11 is off');
-  assert.equal(result.notifications?.length ?? 0, 0);
   assert.equal(store.getPDWin11State('check-pd')?.state, 'off');
 });

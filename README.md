@@ -129,6 +129,7 @@ The uninstaller removes:
 - The service translates configured cron expressions into launchd plist definitions using stable labels in the form `com.kidsalfred.<bot_id>.<task_id>`.
 - Cronjobs execute through `kfc exec --bot BOT_ID --task TASK_ID`, regardless of whether the task runner is `builtin-tool` or `external-command`.
 - Monitoring-style built-in cronjobs such as `checkPDWin11` return structured notification intents; `kfc exec` resolves the correct `BOT_ID`, loads subscribed chats for that task, and fans out delivery through that bot's Feishu credentials.
+- `checkPDWin11` uses Parallels Desktop's `prlctl` CLI as its source of truth for `Windows 11` VM state, rather than matching helper processes from the host process list.
 - On startup and reload, the service reconciles each configured cronjob against launchd:
   - `auto_start = false` jobs are stopped if they are running.
   - `auto_start = true` jobs are restarted if already running, or started if absent.
