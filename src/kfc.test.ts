@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -215,6 +215,52 @@ test('kfc service install falls back to the default config path when --config is
     assert.ok(outputs.some((entry) => entry.includes('Service installed')));
     assert.deepEqual(errors, []);
   } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousConfig === undefined) {
+      delete process.env.KIDS_ALFRED_CONFIG;
+    } else {
+      process.env.KIDS_ALFRED_CONFIG = previousConfig;
+    }
+  }
+});
+
+test('kfc service install writes a plist that does not depend on cwd', { concurrency: false }, async () => {
+  const previousHome = process.env.HOME;
+  const previousConfig = process.env.KIDS_ALFRED_CONFIG;
+  const previousCwd = process.cwd();
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-install-cwd-'));
+  const unrelatedDirectory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-cwd-unrelated-'));
+  process.env.HOME = directory;
+  delete process.env.KIDS_ALFRED_CONFIG;
+  await mkdir(join(directory, 'Library', 'LaunchAgents'), { recursive: true });
+  const calls: string[] = [];
+
+  try {
+    process.chdir(unrelatedDirectory);
+    const manager = new LaunchdServiceManager({
+      execFileAsync: async (_file, args) => {
+        calls.push(args.join(' '));
+        return { stdout: '', stderr: '' };
+      },
+    });
+
+    await manager.install('/tmp/bot.toml');
+
+    const plistPath = join(directory, 'Library', 'LaunchAgents', 'com.kidsalfred.service.plist');
+    const plist = await readFile(plistPath, 'utf8');
+    assert.ok(plist.includes(`<string>${join(previousCwd, 'src', 'index.ts')}</string>`));
+    assert.ok(!plist.includes(`<string>${join(unrelatedDirectory, 'src', 'index.ts')}</string>`));
+    assert.deepEqual(calls, [
+      `bootout gui/${process.getuid()} ${plistPath}`,
+      `bootstrap gui/${process.getuid()} ${plistPath}`,
+      `kickstart -k gui/${process.getuid()}/com.kidsalfred.service`,
+    ]);
+  } finally {
+    process.chdir(previousCwd);
     if (previousHome === undefined) {
       delete process.env.HOME;
     } else {

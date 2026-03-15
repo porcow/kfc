@@ -1,4 +1,7 @@
-## ADDED Requirements
+## Purpose
+Define the suppression rules for duplicate Feishu ingress events before they reach business logic.
+
+## Requirements
 
 ### Requirement: Duplicate Feishu ingress events are suppressed before business handling
 The system SHALL suppress duplicate Feishu ingress events before they enter task, confirmation, or reply logic.

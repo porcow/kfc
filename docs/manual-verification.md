@@ -27,7 +27,7 @@
 4. Confirm every human-facing timestamp shown in Feishu cards or replies uses `YYYY/MM/DD HH:mm:ss` rather than mixed ISO strings.
 5. Send `/tasks` from an allowed Feishu user in bot A and confirm bot A's one-shot task list card arrives.
 6. Send `/tasks` from an allowed Feishu user in bot B and confirm bot B's task list is different if configured differently.
-7. Send `/run sc` from an allowed Feishu user and confirm:
+7. For a bot that explicitly configures task `sc`, send `/run sc` from an allowed Feishu user and confirm:
    - the bot returns the normal confirmation card rather than using a dedicated `/sc` shortcut
    - confirming the request captures the current screen and sends the screenshot image back to the same chat
    - the temporary screenshot file under `~/.kfc/data/screenshot-YYYYMMDD-HHmmss.png` is deleted after successful image delivery

@@ -7,6 +7,8 @@ import type {
   PendingConfirmation,
   ReloadResult,
   RunRecord,
+  ServiceEventStateRecord,
+  ServiceEventType,
   TaskResult,
   TaskResultDeliverySink,
   RunUpdateSink,
@@ -197,6 +199,7 @@ export class KidsAlfredService {
   private runtime: TaskRuntime;
   private readonly cronController: CronController;
   private healthSnapshotProvider?: () => AppHealthSnapshot;
+  private readonly serviceReconnectNotificationThresholdMs: number;
 
   constructor(
     config: BotConfig,
@@ -206,6 +209,7 @@ export class KidsAlfredService {
     cronController?: CronController,
     repository?: RunRepository,
     builtinTools?: Map<string, TaskTool>,
+    serviceReconnectNotificationThresholdMs = 600000,
   ) {
     this.botId = config.botId;
     this.updates = new MultiRunUpdateSink(updates);
@@ -222,6 +226,7 @@ export class KidsAlfredService {
     );
     this.cronController =
       cronController ?? new MemoryCronController(config.botId, config.tasks, this.repository);
+    this.serviceReconnectNotificationThresholdMs = serviceReconnectNotificationThresholdMs;
     this.repository.reconcileInterruptedRuns();
   }
 
@@ -231,6 +236,10 @@ export class KidsAlfredService {
 
   getBotId(): string {
     return this.botId;
+  }
+
+  getServiceReconnectNotificationThresholdMs(): number {
+    return this.serviceReconnectNotificationThresholdMs;
   }
 
   setHealthSnapshotProvider(provider: () => AppHealthSnapshot): void {
@@ -296,6 +305,17 @@ export class KidsAlfredService {
   listTasks(actorId: string): CardResponse {
     this.ensureAuthorized(actorId);
     return buildTaskListCard(Object.values(this.config.tasks));
+  }
+
+  private hasScreencaptureTask(): boolean {
+    return this.config.tasks.sc?.runnerKind === 'builtin-tool'
+      && this.config.tasks.sc?.executionMode === 'oneshot'
+      && this.config.tasks.sc?.tool === 'screencapture';
+  }
+
+  private buildUnsupportedCommandMessage(): string {
+    const runExample = this.hasScreencaptureTask() ? ' (for example `/run sc`)' : '';
+    return `Unsupported command. Use /help, /health, /tasks, /run TASK_ID key=value ...${runExample}, /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.`;
   }
 
   async listCronTasks(
@@ -503,7 +523,9 @@ export class KidsAlfredService {
         return response;
       }
       if (trimmed === '/help') {
-        const response = buildHelpCard();
+        const response = buildHelpCard({
+          hasScreencaptureTask: this.hasScreencaptureTask(),
+        });
         await this.logEvent({
           actorId,
           chatId: context.chatId,
@@ -591,9 +613,7 @@ export class KidsAlfredService {
         });
         return response;
       }
-      const response = buildErrorCard(
-        'Unsupported command. Use /help, /health, /tasks, /run TASK_ID key=value ... (for example `/run sc`), /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.',
-      );
+      const response = buildErrorCard(this.buildUnsupportedCommandMessage());
       await this.logEvent({
         actorId,
         chatId: context.chatId,
@@ -718,6 +738,42 @@ export class KidsAlfredService {
 
   async reconcileCronJobs(): Promise<void> {
     await this.cronController.reconcile();
+  }
+
+  reconcileServiceEventSubscriptions(): void {
+    const allowed = new Set(this.config.allowedUsers);
+    const current = this.repository.listServiceEventSubscriptions();
+    const currentActors = new Set(current.map((record) => record.actorId));
+    for (const actorId of currentActors) {
+      if (!allowed.has(actorId)) {
+        this.repository.deleteServiceEventSubscriptionsForActor(actorId);
+      }
+    }
+    for (const actorId of allowed) {
+      this.repository.upsertServiceEventSubscription(actorId, 'service_online', true);
+      this.repository.upsertServiceEventSubscription(actorId, 'service_reconnected', true);
+    }
+  }
+
+  listServiceEventSubscriberActorIds(eventType: ServiceEventType): string[] {
+    return this.repository
+      .listServiceEventSubscriptions(eventType, { enabledOnly: true })
+      .map((record) => record.actorId);
+  }
+
+  getServiceEventState(): ServiceEventStateRecord | undefined {
+    return this.repository.getServiceEventState();
+  }
+
+  saveServiceEventState(
+    state: Partial<{
+      lastConnectedAt: string | null;
+      lastDisconnectedAt: string | null;
+      lastReconnectedNotifiedAt: string | null;
+    }>,
+    updatedAt?: string,
+  ): ServiceEventStateRecord {
+    return this.repository.saveServiceEventState(state, updatedAt);
   }
 
   private toErrorCard(error: unknown): CardResponse {

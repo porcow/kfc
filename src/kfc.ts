@@ -7,7 +7,7 @@ import process from 'node:process';
 import readline from 'node:readline/promises';
 import * as sdk from '@larksuiteoapi/node-sdk';
 
-import { defaultBotWorkingDirectory, defaultConfigPath, defaultAppPath } from './config/paths.ts';
+import { defaultBotWorkingDirectory, defaultConfigPath, resolveAppEntrypoint } from './config/paths.ts';
 import { loadConfig, validateParameters } from './config/schema.ts';
 import { buildLaunchdLabel, cronLaunchdPlistPath } from './cron.ts';
 import type {
@@ -479,8 +479,7 @@ function buildNotificationCard(notification: TaskNotificationIntent): Record<str
 
 async function writeServicePlist(configPath: string): Promise<string> {
   const plistPath = servicePlistPath();
-  const appPath = defaultAppPath();
-  const sourcePath = resolve(appPath, 'src/index.ts');
+  const sourcePath = resolveAppEntrypoint('src/index.ts');
   await mkdir(join(process.env.HOME ?? process.cwd(), 'Library', 'LaunchAgents'), { recursive: true });
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

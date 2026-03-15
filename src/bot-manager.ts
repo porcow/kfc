@@ -200,8 +200,11 @@ export class BotManager {
         undefined,
         this.cronControllerFactory(botConfig, repository),
         repository,
+        undefined,
+        config.server.serviceReconnectNotificationThresholdMs,
       );
       const bridge = await this.bridgeFactory(service);
+      service.reconcileServiceEventSubscriptions();
       await service.reconcileCronJobs();
       runtimes.set(botId, {
         service,

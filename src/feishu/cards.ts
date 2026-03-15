@@ -4,6 +4,7 @@ import type {
   CronJobRecord,
   ParameterDefinition,
   RunRecord,
+  ServiceEventType,
   TaskDefinition,
 } from '../domain.ts';
 import { formatFeishuTimestamp, formatOptionalFeishuTimestamp } from './timestamp.ts';
@@ -128,6 +129,19 @@ function formatTaskDetails(task: TaskDefinition): string {
   );
 }
 
+function formatShortDuration(totalMs: number): string {
+  const totalMinutes = Math.max(0, Math.floor(totalMs / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0 && minutes > 0) {
+    return `${hours}小时${minutes}分`;
+  }
+  if (hours > 0) {
+    return `${hours}小时`;
+  }
+  return `${Math.max(1, totalMinutes)}分`;
+}
+
 export function buildErrorCard(message: string): CardResponse {
   return {
     type: 'error',
@@ -217,46 +231,49 @@ export function buildCronStatusCard(
   };
 }
 
-export function buildHelpCard(): CardResponse {
+export function buildHelpCard(options: { hasScreencaptureTask?: boolean } = {}): CardResponse {
+  const lines = [
+    '`/health`',
+    'Show service readiness and per-bot WebSocket health.',
+    '',
+    '`/tasks`',
+    'List available tasks and their example `/run` commands.',
+    '',
+    '`/run TASK_ID key=value ...`',
+    'Validate parameters and return a confirmation card before execution.',
+  ];
+  if (options.hasScreencaptureTask) {
+    lines.push('Use `/run sc` to capture the current screen through the standard one-shot flow.');
+  }
+  lines.push(
+    '',
+    '`/cron list`',
+    'List configured cronjob tasks for this bot.',
+    '',
+    '`/cron start TASK_ID`',
+    'Subscribe this chat and start a configured cronjob task if needed.',
+    '',
+    '`/cron stop TASK_ID`',
+    'Stop a configured cronjob task globally and clear all subscriptions.',
+    '',
+    '`/cron status`',
+    'Show current cronjob observed runtime state.',
+    '',
+    '`/run-status RUN_ID`',
+    'Show the latest persisted state and result summary for a run.',
+    '',
+    '`/cancel RUN_ID`',
+    'Request cancellation for a running cancellable task.',
+    '',
+    '`/reload`',
+    'Reload bot configuration from local TOML.',
+    '',
+    'Use `/tasks` to see task-specific example commands.',
+  );
   return {
     type: 'card',
     card: baseCard('Available commands', [
-      buildMarkdown(
-        [
-          '`/health`',
-          'Show service readiness and per-bot WebSocket health.',
-          '',
-          '`/tasks`',
-          'List available tasks and their example `/run` commands.',
-          '',
-          '`/run TASK_ID key=value ...`',
-          'Validate parameters and return a confirmation card before execution.',
-          'Use `/run sc` to capture the current screen through the standard one-shot flow.',
-          '',
-          '`/cron list`',
-          'List configured cronjob tasks for this bot.',
-          '',
-          '`/cron start TASK_ID`',
-          'Subscribe this chat and start a configured cronjob task if needed.',
-          '',
-          '`/cron stop TASK_ID`',
-          'Stop a configured cronjob task globally and clear all subscriptions.',
-          '',
-          '`/cron status`',
-          'Show current cronjob observed runtime state.',
-          '',
-          '`/run-status RUN_ID`',
-          'Show the latest persisted state and result summary for a run.',
-          '',
-          '`/cancel RUN_ID`',
-          'Request cancellation for a running cancellable task.',
-          '',
-          '`/reload`',
-          'Reload bot configuration from local TOML.',
-          '',
-          'Use `/tasks` to see task-specific example commands.',
-        ].join('\n'),
-      ),
+      buildMarkdown(lines.join('\n')),
     ]),
   };
 }
@@ -296,6 +313,42 @@ export function buildHealthCard(snapshot: AppHealthSnapshot): CardResponse {
     type: 'card',
     card: baseCard('Service health', [buildMarkdown(formatHealthDetails(snapshot))]),
   };
+}
+
+export function buildServiceEventNotificationCard(options: {
+  eventType: ServiceEventType;
+  botId: string;
+  connectedAt: string;
+  host: string;
+  loadedAt?: string;
+  outageDurationMs?: number;
+}): Record<string, unknown> {
+  if (options.eventType === 'service_online') {
+    const lines = [
+      `Bot: **${options.botId}**`,
+      `Connected at: \`${formatFeishuTimestamp(options.connectedAt)}\``,
+      `Host: \`${options.host}\``,
+    ];
+    if (options.loadedAt) {
+      lines.push(`Loaded at: \`${formatFeishuTimestamp(options.loadedAt)}\``);
+    }
+    return baseCard('Bot 已上线', [buildMarkdown(lines.join('\n'))]);
+  }
+
+  const outageDuration = formatShortDuration(options.outageDurationMs ?? 0);
+  return baseCard(
+    'Bot 已恢复连接',
+    [
+      buildMarkdown(
+        [
+          `Bot: **${options.botId}**`,
+          `Reconnected at: \`${formatFeishuTimestamp(options.connectedAt)}\``,
+          `Outage duration: **${outageDuration}**`,
+          `Host: \`${options.host}\``,
+        ].join('\n'),
+      ),
+    ],
+  );
 }
 
 export function buildConfirmationCard(

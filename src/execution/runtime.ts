@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
-import { defaultAppPath } from '../config/paths.ts';
+import { resolveAppEntrypoint } from '../config/paths.ts';
 
 import type {
   RunRecord,
@@ -104,7 +103,7 @@ async function runBuiltinToolViaKfc(
       process.execPath,
       [
         '--experimental-strip-types',
-        resolve(defaultAppPath(), 'src/kfc.ts'),
+        resolveAppEntrypoint('src/kfc.ts'),
         'exec',
         '--task-json',
         Buffer.from(JSON.stringify(task), 'utf8').toString('base64'),

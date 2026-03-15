@@ -90,19 +90,128 @@ test('loadConfig parses multiple bots from TOML', async () => {
   const config = await loadConfig(configPath);
 
   assert.equal(config.server.port, 3100);
+  assert.equal(config.server.serviceReconnectNotificationThresholdMs, 600000);
   assert.deepEqual(Object.keys(config.bots).sort(), ['alpha', 'beta']);
   assert.equal(config.bots.alpha.allowedUsers[0], 'user-1');
   assert.equal(config.bots.alpha.tasks.echo.runnerKind, 'builtin-tool');
   assert.equal(config.bots.alpha.tasks.echo.executionMode, 'oneshot');
-  assert.equal(config.bots.alpha.tasks.sc.runnerKind, 'builtin-tool');
-  assert.equal(config.bots.alpha.tasks.sc.executionMode, 'oneshot');
-  assert.equal(config.bots.alpha.tasks.sc.tool, 'screencapture');
+  assert.equal(config.bots.alpha.tasks.sc, undefined);
   assert.equal(config.bots.beta.tasks.say.runnerKind, 'external-command');
   assert.equal(config.bots.beta.tasks.say.executionMode, 'oneshot');
   assert.equal(config.bots.beta.tasks.say.args[1], '{{name}}');
   assert.equal(config.bots.beta.tasks.cleanup.executionMode, 'cronjob');
   assert.equal(config.bots.beta.tasks.cleanup.cron?.schedule, '0 * * * *');
   assert.equal(config.bots.beta.tasks.cleanup.cron?.autoStart, true);
+});
+
+test('loadConfig accepts explicit global reconnect notification threshold override', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-threshold-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+service_reconnect_notification_threshold_ms = 120000
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.echo]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Builtin echo"
+tool = "echo"
+timeout_ms = 5000
+cancellable = true
+`,
+  );
+
+  const config = await loadConfig(configPath);
+
+  assert.equal(config.server.serviceReconnectNotificationThresholdMs, 120000);
+});
+
+test('loadConfig accepts explicit sc configuration and keeps its protected binding', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-sc-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.sc]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Capture the current screen and return the image to this chat"
+tool = "screencapture"
+timeout_ms = 30000
+cancellable = false
+`,
+  );
+
+  const config = await loadConfig(configPath);
+
+  assert.equal(config.bots.alpha.tasks.sc.runnerKind, 'builtin-tool');
+  assert.equal(config.bots.alpha.tasks.sc.executionMode, 'oneshot');
+  assert.equal(config.bots.alpha.tasks.sc.tool, 'screencapture');
+});
+
+test('loadConfig rejects explicit sc configuration that changes its protected binding', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-sc-invalid-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.sc]
+runner_kind = "external-command"
+execution_mode = "oneshot"
+description = "Bad binding"
+command = "/bin/echo"
+args = ["oops"]
+timeout_ms = 1000
+cancellable = false
+`,
+  );
+
+  await assert.rejects(
+    () => loadConfig(configPath),
+    /Predefined task sc must remain a builtin-tool oneshot bound to screencapture/,
+  );
 });
 
 test('loadConfig rejects duplicate bot routes or storage paths', async () => {

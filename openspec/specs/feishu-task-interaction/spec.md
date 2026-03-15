@@ -1,13 +1,14 @@
-## ADDED Requirements
-
+## Purpose
+Define the Feishu-facing command, card, and reply behavior for task discovery, execution, run tracking, and authorization flows.
+## Requirements
 ### Requirement: Authorized users can discover tasks and start runs from Feishu text commands
-The system SHALL allow an authorized Feishu user to request the list of available tasks from Feishu, inspect service health, and start task execution flows by sending structured text commands, including the screenshot task `sc`.
+The system SHALL allow an authorized Feishu user to request the list of available tasks from Feishu, inspect service health, and start task execution flows by sending structured text commands.
 
 #### Scenario: Authorized user requests command help
 - **WHEN** a Feishu user in the allowed user list invokes the bot help command
 - **THEN** the system returns an informational help response that documents the supported text commands
 - **AND** the help response includes at least `/health`, `/tasks`, `/run TASK_ID key=value ...`, `/cron list`, `/cron start TASK_ID`, `/cron stop TASK_ID`, `/cron status`, `/run-status RUN_ID`, `/cancel RUN_ID`, and `/reload`
-- **AND** the help response makes it clear that the screenshot task is invoked through `/run sc`
+- **AND** the help response only references `/run sc` when the current bot has explicitly configured task `sc`
 - **AND** the help response directs the user to `/tasks` for task-specific example commands rather than duplicating the full task catalog
 
 #### Scenario: Authorized user requests bot health from Feishu
@@ -17,7 +18,8 @@ The system SHALL allow an authorized Feishu user to request the list of availabl
 
 #### Scenario: Authorized user requests a screen capture through the standard run flow
 - **WHEN** a Feishu user in the allowed user list sends `/run sc`
-- **THEN** the system treats `sc` as a predefined oneshot task
+- **AND** the current bot has explicitly configured task `sc`
+- **THEN** the system treats `sc` as a configured oneshot task
 - **AND** it follows the standard confirmation flow before execution
 - **AND** after confirmation it delivers the resulting screenshot back to the same Feishu chat where the command was issued
 
@@ -25,6 +27,7 @@ The system SHALL allow an authorized Feishu user to request the list of availabl
 - **WHEN** a Feishu user in the allowed user list invokes the bot's task-list action
 - **THEN** the system returns the predefined one-shot tasks that are available to that user with their descriptions
 - **AND** the returned card includes an example `/run TASK_ID key=value ...` command string for each listed task
+- **AND** task `sc` appears only when the current bot has explicitly configured it
 
 #### Scenario: Unauthorized user requests the task list
 - **WHEN** a Feishu user outside the allowed user list invokes the bot's task-list action
@@ -198,3 +201,27 @@ The system SHALL render every human-facing timestamp sent through the Feishu cha
 - **WHEN** the system exchanges requests, responses, or callback payloads with the Feishu server-side API
 - **THEN** this display-format rule does not require changing any protocol-layer timestamp field
 - **AND** only timestamps rendered into the Feishu chat UI for human readers are subject to the canonical format
+
+### Requirement: Authorized users can receive bot connection event notifications through Feishu
+The system SHALL proactively notify subscribed authorized users when a bot first comes online in the current service session or when it reconnects after a sufficiently long outage.
+
+#### Scenario: Bot sends an online notification after first successful connection in the current process session
+- **WHEN** a bot instance reaches its first successful Feishu WebSocket `connected` state after the current service process session starts
+- **THEN** the system sends a proactive Feishu notification to each subscribed user for event type `service_online`
+- **AND** the notification is delivered through user-directed Feishu messaging rather than a cron chat subscription
+
+#### Scenario: Bot sends a reconnected notification after a long enough outage
+- **WHEN** a bot instance transitions back to `connected` after previously entering a disconnected or reconnecting outage window
+- **AND** the outage duration is at least 5 minutes
+- **THEN** the system sends a proactive Feishu notification to each subscribed user for event type `service_reconnected`
+- **AND** the notification includes the bot recovery time and outage duration
+
+#### Scenario: Short reconnect jitter does not produce a proactive notification
+- **WHEN** a bot instance drops out of `connected` but reconnects in less than 5 minutes
+- **THEN** the system does not send a `service_reconnected` notification
+
+#### Scenario: Connection notifications use private user delivery
+- **WHEN** the system delivers a bot connection event notification
+- **THEN** it addresses the Feishu message to the subscribed user identity for that bot
+- **AND** it does not require an originating chat from a prior command interaction
+

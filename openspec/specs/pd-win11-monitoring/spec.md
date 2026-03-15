@@ -1,4 +1,7 @@
-## ADDED Requirements
+## Purpose
+Define the built-in Windows 11 Parallels monitor behavior, its persisted state model, and its notification policy.
+
+## Requirements
 
 ### Requirement: The system provides a built-in Parallels Windows 11 monitor tool
 The system SHALL provide a built-in tool `checkPDWin11` that inspects the macOS host process list for a Parallels Desktop Windows 11 VM instance.

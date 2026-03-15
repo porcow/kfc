@@ -54,6 +54,7 @@ export interface CronTaskConfig {
 export interface GlobalServerConfig {
   port: number;
   healthPath: string;
+  serviceReconnectNotificationThresholdMs: number;
 }
 
 export interface BotConfig {
@@ -135,6 +136,7 @@ export interface TaskResult {
 export interface TaskNotificationIntent {
   channel: 'feishu';
   chatId?: string;
+  actorId?: string;
   title?: string;
   body: string;
 }
@@ -213,6 +215,23 @@ export interface CronChatSubscriptionRecord {
   chatId: string;
   actorId: string;
   createdAt: string;
+  updatedAt: string;
+}
+
+export type ServiceEventType = 'service_online' | 'service_reconnected';
+
+export interface ServiceEventSubscriptionRecord {
+  actorId: string;
+  eventType: ServiceEventType;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServiceEventStateRecord {
+  lastConnectedAt?: string;
+  lastDisconnectedAt?: string;
+  lastReconnectedNotifiedAt?: string;
   updatedAt: string;
 }
 

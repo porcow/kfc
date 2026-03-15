@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { defaultConfigPath, defaultAppPath } from './config/paths.ts';
+import { defaultConfigPath, resolveAppEntrypoint } from './config/paths.ts';
 import type { BotConfig, CronJobRecord, CronObservedState, TaskDefinition } from './domain.ts';
 import { RunRepository } from './persistence/run-repository.ts';
 
@@ -168,7 +168,7 @@ export class LaunchdCronController implements CronController {
     this.config = config;
     this.repository = repository;
     this.launchd = options.launchd ?? new SystemLaunchdAdapter();
-    this.kfcScriptPath = options.kfcScriptPath ?? resolve(defaultAppPath(), 'src/kfc.ts');
+    this.kfcScriptPath = options.kfcScriptPath ?? resolveAppEntrypoint('src/kfc.ts');
     this.configPath = options.configPath ?? config.sourcePath ?? defaultConfigPath();
   }
   private readonly configPath: string;

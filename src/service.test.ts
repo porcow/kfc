@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { BotConfig } from './domain.ts';
+import { RunRepository } from './persistence/run-repository.ts';
 import {
   KidsAlfredService,
   MemoryEventLogSink,
@@ -227,6 +228,31 @@ test('service exposes informational task cards and text-driven confirmation flow
   await service.close();
 });
 
+test('service hides sc when the current bot has not configured it', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-no-sc-'));
+  const databasePath = join(directory, 'runs.sqlite');
+  const botConfig = createBotConfig('alpha', databasePath);
+  delete botConfig.tasks.sc;
+  const service = new KidsAlfredService(botConfig);
+
+  const taskList = await service.handleMessage('operator-1', '/tasks');
+  const taskListJson = JSON.stringify(taskList.card);
+  assert.ok(!taskListJson.includes('/run sc'));
+
+  const help = await service.handleMessage('operator-1', '/help');
+  const helpJson = JSON.stringify(help.card);
+  assert.ok(!helpJson.includes('/run sc'));
+
+  const unsupported = await service.handleMessage('operator-1', '/unknown');
+  const unsupportedJson = JSON.stringify(unsupported.card);
+  assert.ok(!unsupportedJson.includes('/run sc'));
+
+  const runSc = await service.handleMessage('operator-1', '/run sc', { chatId: 'chat-no-sc-1' });
+  assert.ok(JSON.stringify(runSc.card).includes('Unknown task: sc'));
+
+  await service.close();
+});
+
 test('service routes cronjob tasks through /cron and rejects mode mismatches', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-cron-'));
   const databasePath = join(directory, 'runs.sqlite');
@@ -278,6 +304,38 @@ test('service routes cronjob tasks through /cron and rejects mode mismatches', a
 
   const startOneshot = await service.handleMessage('operator-1', '/cron start echo');
   assert.ok(JSON.stringify(startOneshot.card).includes('not a cronjob'));
+
+  await service.close();
+});
+
+test('service reconciles allowed users into default service event subscriptions', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-service-event-subscriptions-'));
+  const databasePath = join(directory, 'runs.sqlite');
+  const repository = new RunRepository(databasePath);
+  repository.upsertServiceEventSubscription('stale-user', 'service_online', true);
+  repository.upsertServiceEventSubscription('stale-user', 'service_reconnected', true);
+  const botConfig = createBotConfig('alpha', databasePath);
+  botConfig.allowedUsers = ['operator-1', 'operator-2'];
+  const service = new KidsAlfredService(
+    botConfig,
+    new MemoryRunUpdateSink(),
+    undefined,
+    undefined,
+    undefined,
+    repository,
+  );
+
+  service.reconcileServiceEventSubscriptions();
+
+  assert.deepEqual(service.listServiceEventSubscriberActorIds('service_online'), [
+    'operator-1',
+    'operator-2',
+  ]);
+  assert.deepEqual(service.listServiceEventSubscriberActorIds('service_reconnected'), [
+    'operator-1',
+    'operator-2',
+  ]);
+  assert.equal(repository.getServiceEventSubscription('stale-user', 'service_online'), undefined);
 
   await service.close();
 });
@@ -684,4 +742,26 @@ test('runtime covers builtin, external, timeout, cancellation, and restart-safe 
   assert.ok(JSON.stringify(restored.card).includes(builtinRunId));
 
   await service.close();
+});
+
+test('builtin tasks resolve the CLI entrypoint independently of cwd', { concurrency: false }, async () => {
+  const previousCwd = process.cwd();
+  const unrelatedDirectory = await mkdtemp(join(tmpdir(), 'kids-alfred-runtime-cwd-'));
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-runtime-entrypoint-'));
+  const databasePath = join(directory, 'runs.sqlite');
+  const service = new KidsAlfredService(createBotConfig('alpha', databasePath));
+
+  try {
+    process.chdir(unrelatedDirectory);
+    const confirmation = service.submitTaskRequest('operator-1', 'echo', { message: 'builtin' });
+    const confirmationId = JSON.parse(JSON.stringify(confirmation.card)).elements[0].content
+      .match(/confirm_[\w-]+/u)?.[0]!;
+    const runCard = await service.confirmTaskRequest('operator-1', confirmationId);
+    const runId = JSON.parse(JSON.stringify(runCard.card)).elements[0].content
+      .match(/run_[\w-]+/u)?.[0]!;
+    await waitForState(service, 'operator-1', runId, 'succeeded');
+  } finally {
+    process.chdir(previousCwd);
+    await service.close();
+  }
 });

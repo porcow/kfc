@@ -1,4 +1,7 @@
-## ADDED Requirements
+## Purpose
+Define how cron-managed monitoring tasks persist chat subscriptions and fan out proactive notifications to subscribed Feishu chats.
+
+## Requirements
 
 ### Requirement: The system persists chat subscriptions for cron notification tasks
 The system SHALL persist bot-scoped, task-scoped Feishu chat subscriptions for cron-managed monitoring tasks using `chat_id` as the subscription key.

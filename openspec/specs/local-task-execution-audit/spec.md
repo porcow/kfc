@@ -1,11 +1,13 @@
-## ADDED Requirements
-
+## Purpose
+Define the local execution, persistence, audit, lifecycle, and service-management behavior that must remain durable and operator-auditable across runs and restarts.
+## Requirements
 ### Requirement: The `sc` oneshot task captures the current screen and returns it through Feishu
-The system SHALL support a predefined oneshot task `sc`, backed by the builtin-tool `screencapture`, that captures the current macOS screen, stores the image temporarily on disk, sends it back through the Feishu SDK to the originating chat, and removes the temporary file after successful delivery.
+The system SHALL support a configured oneshot task `sc`, backed by the builtin-tool `screencapture`, that captures the current macOS screen, stores the image temporarily on disk, sends it back through the Feishu SDK to the originating chat, and removes the temporary file after successful delivery.
 
 #### Scenario: Authorized `/run sc` request triggers the configured screencapture task
 - **WHEN** an authorized Feishu user issues `/run sc` and confirms execution
-- **THEN** the system resolves the predefined oneshot task `sc`
+- **AND** the current bot has explicitly configured task `sc`
+- **THEN** the system resolves the configured oneshot task `sc`
 - **AND** it executes the underlying builtin-tool `screencapture` on the host machine
 
 #### Scenario: Screenshot file is written to the default work data directory
@@ -31,6 +33,16 @@ The system SHALL support a predefined oneshot task `sc`, backed by the builtin-t
 - **WHEN** the host cannot capture the current screen successfully
 - **THEN** the system fails the `sc` task
 - **AND** it does not attempt to upload or send a screenshot image to Feishu
+
+#### Scenario: Bot omits explicit `sc` configuration
+- **WHEN** a bot does not declare `[bots.<id>.tasks.sc]` in local configuration
+- **THEN** the bot does not expose task `sc` in its active task registry
+- **AND** `/run sc` is rejected as an unknown task for that bot
+
+#### Scenario: Bot explicitly configures `sc`
+- **WHEN** a bot declares `[bots.<id>.tasks.sc]` in local configuration
+- **THEN** the system accepts it only if it remains bound to `runner_kind = "builtin-tool"`, `execution_mode = "oneshot"`, and `tool = "screencapture"`
+- **AND** the bot exposes task `sc` through its active task registry
 
 ### Requirement: The executor runs only predefined local tasks
 The system SHALL execute only tasks declared in local configuration and SHALL start them on the bot's host machine using the declared runner kind and execution definition.
@@ -362,6 +374,11 @@ The system SHALL persist the reminder timing metadata required by monitor-style 
 ### Requirement: Feishu-facing audit timestamps are formatted at render time
 The system SHALL preserve canonical persisted run and monitor timestamps internally, and SHALL format those timestamps into `YYYY/MM/DD HH:mm:ss` only when rendering Feishu-facing content.
 
+#### Scenario: Persisted timestamps are formatted only at Feishu render time
+- **WHEN** the system prepares a Feishu-facing card or reply from persisted run or monitor state
+- **THEN** it leaves the stored timestamps unchanged in persistence
+- **AND** it formats the displayed values into `YYYY/MM/DD HH:mm:ss` during rendering
+
 ### Requirement: Inbound Feishu interactions are logged as structured decisions
 The system SHALL emit a structured audit log entry for each supported inbound Feishu message or card action that reaches bot business logic, including rejected and invalid requests.
 
@@ -431,3 +448,54 @@ The system SHALL provide an operator-visible signal when WebSocket event ingress
 - **WHEN** a bot reconnects successfully after one or more failed reconnect attempts
 - **THEN** the consecutive reconnect failure count resets
 - **AND** the health surface reflects the restored connected state
+
+### Requirement: Bot connection event subscriptions are persisted and reconciled from allowlists
+The system SHALL persist service-level event subscriptions separately from task and cron subscriptions, and SHALL reconcile them against each bot's `allowed_users`.
+
+#### Scenario: Allowlisted user receives default service event subscriptions
+- **WHEN** a bot starts or reloads configuration with an `allowed_users` entry not yet present in service event subscriptions
+- **THEN** the system creates enabled default subscriptions for that actor for `service_online` and `service_reconnected`
+
+#### Scenario: Removed allowlisted user loses service event subscriptions
+- **WHEN** a bot reloads configuration and an actor is no longer present in that bot's `allowed_users`
+- **THEN** the system removes or disables that actor's persisted service event subscriptions for that bot
+
+#### Scenario: Service event subscriptions remain bot-scoped
+- **WHEN** multiple bots are loaded in the same process
+- **THEN** each bot persists and resolves its own service event subscriptions independently by `bot_id`
+
+### Requirement: Bot connection event state is persisted independently from run and cron state
+The system SHALL persist service connection-event state per bot so reconnect detection survives process restarts and remains separate from run history and cron runtime state.
+
+#### Scenario: Bot persists the start of an outage window
+- **WHEN** a bot transitions from `connected` into `reconnecting` or `disconnected`
+- **THEN** the system records `last_disconnected_at` as the start of the current outage window
+- **AND** it does not overwrite that timestamp on subsequent retry churn inside the same outage window
+
+#### Scenario: Bot persists reconnect notification bookkeeping
+- **WHEN** a bot sends a `service_reconnected` notification after recovering from an outage window
+- **THEN** the system updates the persisted bot connection-event state with the reconnect time and the last reconnect notification time
+
+#### Scenario: Service-online notification is session-scoped rather than permanently deduplicated
+- **WHEN** a bot process restarts and the bot reaches its first successful `connected` state in the new process session
+- **THEN** the system may emit a new `service_online` notification even if it emitted one in a prior process session
+- **AND** this session-scoped dedup is tracked in process memory rather than as a permanent bot-history flag
+
+### Requirement: WebSocket connection transitions can emit service event notifications
+The system SHALL interpret bot WebSocket state transitions as service event triggers and emit notifications only when the transition semantics match the configured service event rules.
+
+#### Scenario: Recovery after configured long outage emits service_reconnected
+- **WHEN** a bot runtime has a persisted outage window start time
+- **AND** its WebSocket health transitions back into `connected`
+- **AND** the outage duration is at least the global `server.service_reconnect_notification_threshold_ms`
+- **THEN** the system emits one `service_reconnected` event notification for that outage window
+
+#### Scenario: Recovery below configured threshold does not emit service_reconnected
+- **WHEN** a bot runtime transitions back into `connected`
+- **AND** the elapsed time since `last_disconnected_at` is less than the global `server.service_reconnect_notification_threshold_ms`
+- **THEN** the system does not emit `service_reconnected`
+
+#### Scenario: Reconnect threshold defaults to ten minutes
+- **WHEN** the operator does not configure `server.service_reconnect_notification_threshold_ms`
+- **THEN** the system uses a default reconnect notification threshold of `600000` milliseconds
+

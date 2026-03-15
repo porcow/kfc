@@ -17,20 +17,6 @@ import type {
 import { defaultBotWorkingDirectory } from './paths.ts';
 import { parseToml } from './toml.ts';
 
-function predefinedScreencaptureTask(): BuiltinToolTaskDefinition {
-  return {
-    id: 'sc',
-    runnerKind: 'builtin-tool',
-    executionMode: 'oneshot',
-    description: 'Capture the current screen and return the image to this chat',
-    tool: 'screencapture',
-    timeoutMs: 30000,
-    cancellable: false,
-    parameters: {},
-    config: {},
-  };
-}
-
 function validatePredefinedTask(task: TaskDefinition, path: string): void {
   if (task.id !== 'sc') {
     return;
@@ -204,6 +190,10 @@ function parseGlobalServer(input: unknown): GlobalServerConfig {
   return {
     port: expectNumber(server.port ?? 3000, 'server.port'),
     healthPath: expectString(server.health_path ?? '/health', 'server.health_path'),
+    serviceReconnectNotificationThresholdMs: expectNumber(
+      server.service_reconnect_notification_threshold_ms ?? 600000,
+      'server.service_reconnect_notification_threshold_ms',
+    ),
   };
 }
 
@@ -236,9 +226,6 @@ function parseBotConfig(botId: string, input: unknown, loadedAt: string): BotCon
   for (const [taskId, taskValue] of Object.entries(rawTasks)) {
     tasks[taskId] = parseTask(taskId, taskValue, `bots.${botId}.tasks`);
     validatePredefinedTask(tasks[taskId], `bots.${botId}.tasks.${taskId}`);
-  }
-  if (!tasks.sc) {
-    tasks.sc = predefinedScreencaptureTask();
   }
 
   return {

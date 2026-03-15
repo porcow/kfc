@@ -1,18 +1,21 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { unlink } from 'node:fs/promises';
+import { hostname } from 'node:os';
 
 import type {
   BotWebSocketHealth,
   RunRecord,
   RunUpdateSink,
+  ServiceEventStateRecord,
+  ServiceEventType,
   TaskDefinition,
   TaskResult,
   TaskResultArtifact,
   TaskResultDeliverySink,
 } from '../domain.ts';
 import type { KidsAlfredService } from '../service.ts';
-import { buildRunStatusCard } from './cards.ts';
+import { buildRunStatusCard, buildServiceEventNotificationCard } from './cards.ts';
 
 interface RequestHandler {
   (request: IncomingMessage, response: ServerResponse): void;
@@ -161,6 +164,22 @@ type IngressAwareService = Pick<
     }): Promise<void>;
   }>;
 
+type ServiceEventAwareService = KidsAlfredService &
+  Pick<
+    KidsAlfredService,
+    | 'listServiceEventSubscriberActorIds'
+    | 'getServiceEventState'
+    | 'saveServiceEventState'
+    | 'getServiceReconnectNotificationThresholdMs'
+    | 'getConfig'
+    | 'getBotId'
+  >;
+
+interface MessageTarget {
+  receiveIdType: 'chat_id' | 'open_id';
+  receiveId: string;
+}
+
 const RECONNECT_WARNING_THRESHOLD = 3;
 
 function stringifyLogMessage(message: unknown): string {
@@ -258,15 +277,15 @@ export function applyWebSocketLogEvent(
 
 async function sendInteractiveCard(
   client: ReplyClient,
-  chatId: string,
+  target: MessageTarget,
   card: Record<string, unknown>,
 ): Promise<void> {
   await client.im.v1.message.create({
     params: {
-      receive_id_type: 'chat_id',
+      receive_id_type: target.receiveIdType,
     },
     data: {
-      receive_id: chatId,
+      receive_id: target.receiveId,
       content: JSON.stringify(card),
       msg_type: 'interactive',
     },
@@ -338,6 +357,128 @@ async function sendFeishuImage(
       msg_type: 'image',
     },
   });
+}
+
+async function sendServiceEventNotification(
+  client: ReplyClient,
+  service: ServiceEventAwareService,
+  eventType: ServiceEventType,
+  connectedAt: string,
+  options: { outageDurationMs?: number } = {},
+): Promise<void> {
+  const actorIds = service.listServiceEventSubscriberActorIds(eventType);
+  if (actorIds.length === 0) {
+    return;
+  }
+  const card = buildServiceEventNotificationCard({
+    eventType,
+    botId: service.getBotId(),
+    connectedAt,
+    host: hostname(),
+    loadedAt: service.getConfig().loadedAt,
+    outageDurationMs: options.outageDurationMs,
+  });
+  for (const actorId of actorIds) {
+    await sendInteractiveCard(
+      client,
+      {
+        receiveIdType: 'open_id',
+        receiveId: actorId,
+      },
+      card,
+    ).catch((error) => {
+      console.error(
+        JSON.stringify({
+          logType: 'service_event_notification_delivery_failed',
+          botId: service.getBotId(),
+          actorId,
+          eventType,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    });
+  }
+}
+
+function isConnectedState(state: BotWebSocketHealth['state']): boolean {
+  return state === 'connected';
+}
+
+function isOutageState(state: BotWebSocketHealth['state']): boolean {
+  return state === 'reconnecting' || state === 'disconnected';
+}
+
+export async function processServiceConnectionTransition(
+  service: ServiceEventAwareService,
+  client: ReplyClient,
+  previousHealth: BotWebSocketHealth,
+  nextHealth: BotWebSocketHealth,
+  now: string,
+  onlineNotificationSent: boolean,
+): Promise<boolean> {
+  if (previousHealth.state === nextHealth.state) {
+    return onlineNotificationSent;
+  }
+
+  const state = service.getServiceEventState();
+  if (isConnectedState(previousHealth.state) && isOutageState(nextHealth.state)) {
+    if (!state?.lastDisconnectedAt) {
+      service.saveServiceEventState({
+        lastDisconnectedAt: now,
+      }, now);
+    }
+    return onlineNotificationSent;
+  }
+
+  if (!isConnectedState(nextHealth.state)) {
+    return onlineNotificationSent;
+  }
+
+  service.saveServiceEventState(
+    {
+      lastConnectedAt: now,
+    },
+    now,
+  );
+
+  let nextOnlineNotificationSent = onlineNotificationSent;
+  if (!nextOnlineNotificationSent) {
+    nextOnlineNotificationSent = true;
+    await sendServiceEventNotification(client, service, 'service_online', now);
+  }
+
+  const outageStartedAt = state?.lastDisconnectedAt;
+  const shouldTreatAsPersistedOutage =
+    previousHealth.state === 'connecting' && Boolean(outageStartedAt);
+  if (!outageStartedAt || (!isOutageState(previousHealth.state) && !shouldTreatAsPersistedOutage)) {
+    service.saveServiceEventState({ lastDisconnectedAt: null }, now);
+    return nextOnlineNotificationSent;
+  }
+
+  const outageDurationMs = new Date(now).valueOf() - new Date(outageStartedAt).valueOf();
+  if (outageDurationMs >= service.getServiceReconnectNotificationThresholdMs()) {
+    await sendServiceEventNotification(client, service, 'service_reconnected', now, {
+      outageDurationMs,
+    });
+    service.saveServiceEventState(
+      {
+        lastDisconnectedAt: null,
+        lastConnectedAt: now,
+        lastReconnectedNotifiedAt: now,
+      },
+      now,
+    );
+    return nextOnlineNotificationSent;
+  }
+
+  service.saveServiceEventState(
+    {
+      lastDisconnectedAt: null,
+      lastConnectedAt: now,
+    },
+    now,
+  );
+  return nextOnlineNotificationSent;
 }
 
 export class FeishuTaskResultSink implements TaskResultDeliverySink {
@@ -476,7 +617,14 @@ export function createEventDispatcherHandlers(
         chatId: chatId || undefined,
       });
       if (chatId) {
-        await sendInteractiveCard(client, chatId, reply.card);
+        await sendInteractiveCard(
+          client,
+          {
+            receiveIdType: 'chat_id',
+            receiveId: chatId,
+          },
+          reply.card,
+        );
       }
     },
     'card.action.trigger': async (data: any) => {
@@ -534,30 +682,76 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
   };
   let wsClient: any;
   let manuallyClosed = false;
+  let onlineNotificationSent = false;
+  let connectionEventQueue = Promise.resolve();
+  const enqueueConnectionEvent = (operation: () => Promise<void>) => {
+    connectionEventQueue = connectionEventQueue
+      .then(operation)
+      .catch((error) => {
+        console.error(
+          JSON.stringify({
+            logType: 'service_event_notification_failed',
+            botId: service.getBotId(),
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      });
+  };
+  const handleConnectionTransition = (
+    previousHealth: BotWebSocketHealth,
+    nextHealth: BotWebSocketHealth,
+    now: string,
+  ) => {
+    if (previousHealth.state === nextHealth.state) {
+      return;
+    }
+    enqueueConnectionEvent(async () => {
+      onlineNotificationSent = await processServiceConnectionTransition(
+        service,
+        client,
+        previousHealth,
+        nextHealth,
+        now,
+        onlineNotificationSent,
+      );
+    });
+  };
   const wsLogger = {
     error: (...messages: unknown[]) => {
       console.error(...messages);
-      Object.assign(
-        webSocketHealth,
-        applyWebSocketLogEvent(webSocketHealth, 'error', messages, { manuallyClosed }),
-      );
+      const now = new Date().toISOString();
+      const previousHealth = { ...webSocketHealth };
+      const nextHealth = applyWebSocketLogEvent(webSocketHealth, 'error', messages, {
+        manuallyClosed,
+        now,
+      });
+      Object.assign(webSocketHealth, nextHealth);
+      handleConnectionTransition(previousHealth, nextHealth, now);
     },
     warn: (...messages: unknown[]) => {
       console.warn(...messages);
     },
     info: (...messages: unknown[]) => {
       console.info(...messages);
-      Object.assign(
-        webSocketHealth,
-        applyWebSocketLogEvent(webSocketHealth, 'info', messages, { manuallyClosed }),
-      );
+      const now = new Date().toISOString();
+      const previousHealth = { ...webSocketHealth };
+      const nextHealth = applyWebSocketLogEvent(webSocketHealth, 'info', messages, {
+        manuallyClosed,
+        now,
+      });
+      Object.assign(webSocketHealth, nextHealth);
+      handleConnectionTransition(previousHealth, nextHealth, now);
     },
     debug: (...messages: unknown[]) => {
       console.debug(...messages);
-      Object.assign(
-        webSocketHealth,
-        applyWebSocketLogEvent(webSocketHealth, 'debug', messages, { manuallyClosed }),
-      );
+      const now = new Date().toISOString();
+      const previousHealth = { ...webSocketHealth };
+      const nextHealth = applyWebSocketLogEvent(webSocketHealth, 'debug', messages, {
+        manuallyClosed,
+        now,
+      });
+      Object.assign(webSocketHealth, nextHealth);
+      handleConnectionTransition(previousHealth, nextHealth, now);
     },
     trace: (...messages: unknown[]) => {
       console.debug(...messages);
@@ -565,7 +759,17 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
   };
   const client = new sdk.Client(baseConfig);
   service.attachRunUpdateSink(
-    new FeishuRunUpdateSink(async (chatId, card) => await sendInteractiveCard(client, chatId, card)),
+    new FeishuRunUpdateSink(
+      async (chatId, card) =>
+        await sendInteractiveCard(
+          client,
+          {
+            receiveIdType: 'chat_id',
+            receiveId: chatId,
+          },
+          card,
+        ),
+    ),
   );
   service.attachTaskResultDeliverySink(new FeishuTaskResultSink(client));
   const eventHandlers = createEventDispatcherHandlers(service, client);
@@ -638,6 +842,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       } else if (typeof wsClient.close === 'function') {
         await wsClient.close();
       }
+      await connectionEventQueue;
       wsClient = undefined;
     },
     getWebSocketHealth: () =>

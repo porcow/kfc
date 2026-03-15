@@ -14,6 +14,7 @@ Default local paths:
 - Each bot defaults its working directory to `~/.kfc/`
 - Each bot defaults its SQLite store to `~/.kfc/data/<botId>.sqlite`
 - Relative `sqlite_path` values are resolved against that bot working directory
+- `server.service_reconnect_notification_threshold_ms` controls the minimum outage window before `service_reconnected` is sent; the default is `600000` (`10` minutes)
 
 ## Host Install
 
@@ -83,7 +84,7 @@ The uninstaller removes:
 - Send `/help` to get a concise command reference for the bot text interface.
 - Send `/health` to get an informational health summary for the running service, active bots, and per-bot WebSocket state.
 - Send `/tasks` to get an informational catalog of one-shot tasks for the current bot.
-- The predefined screenshot task is always available as `/run sc`; it captures the current screen and returns the image to the same chat after confirmation.
+- Bots only expose `/run sc` when they explicitly configure task `sc`; when enabled, it captures the current screen and returns the image to the same chat after confirmation.
 - If your Feishu user is not yet authorized, the bot returns a one-time pairing card with a local admin command in the form `kfc pair BOT_ID-RAND6`.
 - Each task card includes an example `/run TASK_ID key=value ...` command.
 - Send `/run TASK_ID key=value ...` to validate parameters and get an explicit confirmation card for one-shot tasks.

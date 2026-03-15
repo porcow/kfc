@@ -12,6 +12,9 @@ import type {
   PairingRecord,
   RunRecord,
   RunState,
+  ServiceEventStateRecord,
+  ServiceEventSubscriptionRecord,
+  ServiceEventType,
 } from '../domain.ts';
 
 export class RunRepository {
@@ -79,6 +82,21 @@ export class RunRepository {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (task_id, chat_id)
+      );
+      CREATE TABLE IF NOT EXISTS service_event_subscriptions (
+        actor_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (actor_id, event_type)
+      );
+      CREATE TABLE IF NOT EXISTS service_event_state (
+        singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+        last_connected_at TEXT,
+        last_disconnected_at TEXT,
+        last_reconnected_notified_at TEXT,
+        updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS pd_win11_states (
         task_id TEXT PRIMARY KEY,
@@ -488,6 +506,124 @@ export class RunRepository {
     return Number(result.changes ?? 0);
   }
 
+  upsertServiceEventSubscription(
+    actorId: string,
+    eventType: ServiceEventType,
+    enabled = true,
+    updatedAt = new Date().toISOString(),
+  ): ServiceEventSubscriptionRecord {
+    const current = this.getServiceEventSubscription(actorId, eventType);
+    const createdAt = current?.createdAt ?? updatedAt;
+    this.database
+      .prepare(`
+        INSERT INTO service_event_subscriptions (
+          actor_id, event_type, enabled, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(actor_id, event_type) DO UPDATE SET
+          enabled = excluded.enabled,
+          updated_at = excluded.updated_at
+      `)
+      .run(actorId, eventType, enabled ? 1 : 0, createdAt, updatedAt);
+    return this.getServiceEventSubscription(actorId, eventType)!;
+  }
+
+  getServiceEventSubscription(
+    actorId: string,
+    eventType: ServiceEventType,
+  ): ServiceEventSubscriptionRecord | undefined {
+    const row = this.database
+      .prepare(
+        `
+          SELECT * FROM service_event_subscriptions
+          WHERE actor_id = ? AND event_type = ?
+        `,
+      )
+      .get(actorId, eventType) as Record<string, unknown> | undefined;
+    return row ? this.toServiceEventSubscriptionRecord(row) : undefined;
+  }
+
+  listServiceEventSubscriptions(
+    eventType?: ServiceEventType,
+    options: { enabledOnly?: boolean } = {},
+  ): ServiceEventSubscriptionRecord[] {
+    const clauses: string[] = [];
+    const args: unknown[] = [];
+    if (eventType) {
+      clauses.push('event_type = ?');
+      args.push(eventType);
+    }
+    if (options.enabledOnly) {
+      clauses.push('enabled = 1');
+    }
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database
+      .prepare(
+        `
+          SELECT * FROM service_event_subscriptions
+          ${whereClause}
+          ORDER BY actor_id ASC, event_type ASC
+        `,
+      )
+      .all(...args) as Record<string, unknown>[];
+    return rows.map((row) => this.toServiceEventSubscriptionRecord(row));
+  }
+
+  deleteServiceEventSubscriptionsForActor(actorId: string): number {
+    const result = this.database
+      .prepare('DELETE FROM service_event_subscriptions WHERE actor_id = ?')
+      .run(actorId);
+    return Number(result.changes ?? 0);
+  }
+
+  getServiceEventState(): ServiceEventStateRecord | undefined {
+    const row = this.database
+      .prepare('SELECT * FROM service_event_state WHERE singleton_id = 1')
+      .get() as Record<string, unknown> | undefined;
+    return row ? this.toServiceEventStateRecord(row) : undefined;
+  }
+
+  saveServiceEventState(
+    state: Partial<{
+      lastConnectedAt: string | null;
+      lastDisconnectedAt: string | null;
+      lastReconnectedNotifiedAt: string | null;
+    }>,
+    updatedAt = new Date().toISOString(),
+  ): ServiceEventStateRecord {
+    const current = this.getServiceEventState();
+    const next: ServiceEventStateRecord = {
+      lastConnectedAt:
+        state.lastConnectedAt !== undefined ? state.lastConnectedAt ?? undefined : current?.lastConnectedAt,
+      lastDisconnectedAt:
+        state.lastDisconnectedAt !== undefined
+          ? state.lastDisconnectedAt ?? undefined
+          : current?.lastDisconnectedAt,
+      lastReconnectedNotifiedAt:
+        state.lastReconnectedNotifiedAt !== undefined
+          ? state.lastReconnectedNotifiedAt ?? undefined
+          : current?.lastReconnectedNotifiedAt,
+      updatedAt,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO service_event_state (
+          singleton_id, last_connected_at, last_disconnected_at, last_reconnected_notified_at, updated_at
+        ) VALUES (1, ?, ?, ?, ?)
+        ON CONFLICT(singleton_id) DO UPDATE SET
+          last_connected_at = excluded.last_connected_at,
+          last_disconnected_at = excluded.last_disconnected_at,
+          last_reconnected_notified_at = excluded.last_reconnected_notified_at,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        next.lastConnectedAt ?? null,
+        next.lastDisconnectedAt ?? null,
+        next.lastReconnectedNotifiedAt ?? null,
+        next.updatedAt,
+      );
+    return this.getServiceEventState()!;
+  }
+
   getPDWin11State(taskId: string): PDWin11MonitorState | undefined {
     const row = this.database
       .prepare('SELECT * FROM pd_win11_states WHERE task_id = ?')
@@ -584,6 +720,29 @@ export class RunRepository {
       chatId: String(row.chat_id),
       actorId: String(row.actor_id),
       createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private toServiceEventSubscriptionRecord(
+    row: Record<string, unknown>,
+  ): ServiceEventSubscriptionRecord {
+    return {
+      actorId: String(row.actor_id),
+      eventType: row.event_type as ServiceEventType,
+      enabled: Number(row.enabled) === 1,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private toServiceEventStateRecord(row: Record<string, unknown>): ServiceEventStateRecord {
+    return {
+      lastConnectedAt: row.last_connected_at ? String(row.last_connected_at) : undefined,
+      lastDisconnectedAt: row.last_disconnected_at ? String(row.last_disconnected_at) : undefined,
+      lastReconnectedNotifiedAt: row.last_reconnected_notified_at
+        ? String(row.last_reconnected_notified_at)
+        : undefined,
       updatedAt: String(row.updated_at),
     };
   }
