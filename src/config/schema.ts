@@ -18,17 +18,29 @@ import { defaultBotWorkingDirectory } from './paths.ts';
 import { parseToml } from './toml.ts';
 
 function validatePredefinedTask(task: TaskDefinition, path: string): void {
-  if (task.id !== 'sc') {
+  if (task.id === 'sc') {
+    if (
+      task.runnerKind !== 'builtin-tool' ||
+      task.executionMode !== 'oneshot' ||
+      task.tool !== 'screencapture'
+    ) {
+      throw new Error(
+        `Predefined task sc must remain a builtin-tool oneshot bound to screencapture at ${path}`,
+      );
+    }
     return;
   }
-  if (
-    task.runnerKind !== 'builtin-tool' ||
-    task.executionMode !== 'oneshot' ||
-    task.tool !== 'screencapture'
-  ) {
-    throw new Error(
-      `Predefined task sc must remain a builtin-tool oneshot bound to screencapture at ${path}`,
-    );
+
+  if (task.id === 'update') {
+    if (
+      task.runnerKind !== 'builtin-tool' ||
+      task.executionMode !== 'oneshot' ||
+      task.tool !== 'self-update'
+    ) {
+      throw new Error(
+        `Predefined task update must remain a builtin-tool oneshot bound to self-update at ${path}`,
+      );
+    }
   }
 }
 

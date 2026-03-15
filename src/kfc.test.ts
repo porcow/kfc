@@ -228,6 +228,213 @@ test('kfc service install falls back to the default config path when --config is
   }
 });
 
+test('kfc update prints already-latest status without confirmation', async () => {
+  const outputs: string[] = [];
+  const errors: string[] = [];
+  let confirmCalls = 0;
+
+  const exitCode = await runKfcCli(
+    ['update'],
+    {
+      serviceManager: {
+        async install() {},
+        async uninstall() {},
+        async start() {},
+        async restart() {},
+        async stop() {},
+      },
+      pairAuthorizer: async () => ({ actorId: '', changed: false }),
+      taskExecutor: async () => ({ summary: 'ok' }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      updateInspector: async () => ({
+        status: 'up_to_date',
+        currentVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
+        latestVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
+        summary: 'Already up to date at main@abc1234.',
+      }),
+      updatePerformer: async () => {
+        throw new Error('unexpected perform');
+      },
+      confirmUpdate: async () => {
+        confirmCalls += 1;
+        return true;
+      },
+      stdout: { write(value) { outputs.push(String(value)); } },
+      stderr: { write(value) { errors.push(String(value)); } },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(confirmCalls, 0);
+  assert.deepEqual(errors, []);
+  assert.ok(outputs.some((entry) => entry.includes('Already up to date at main@abc1234.')));
+});
+
+test('kfc update prompts before performing an available update', async () => {
+  const outputs: string[] = [];
+  const errors: string[] = [];
+  const prompts: string[] = [];
+  let performCalls = 0;
+
+  const exitCode = await runKfcCli(
+    ['update'],
+    {
+      serviceManager: {
+        async install() {},
+        async uninstall() {},
+        async start() {},
+        async restart() {},
+        async stop() {},
+      },
+      pairAuthorizer: async () => ({ actorId: '', changed: false }),
+      taskExecutor: async () => ({ summary: 'ok' }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      updateInspector: async () => ({
+        status: 'update_available',
+        currentVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
+        latestVersion: { branch: 'main', commit: 'def5678', upstreamBranch: 'origin/main' },
+        summary: 'Update available: main@abc1234 -> main@def5678.',
+      }),
+      updatePerformer: async () => {
+        performCalls += 1;
+        return {
+          previousVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
+          currentVersion: { branch: 'main', commit: 'def5678' },
+          summary: 'Update complete: main@abc1234 -> main@def5678.',
+        };
+      },
+      confirmUpdate: async (prompt) => {
+        prompts.push(prompt);
+        return true;
+      },
+      stdout: { write(value) { outputs.push(String(value)); } },
+      stderr: { write(value) { errors.push(String(value)); } },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(performCalls, 1);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /Continue with update\? \[y\/N\]/);
+  assert.deepEqual(errors, []);
+  assert.ok(outputs.some((entry) => entry.includes('Update complete: main@abc1234 -> main@def5678.')));
+});
+
+test('kfc update supports --yes and skips confirmation', async () => {
+  let confirmCalls = 0;
+  let performCalls = 0;
+
+  const exitCode = await runKfcCli(
+    ['update', '--yes'],
+    {
+      serviceManager: {
+        async install() {},
+        async uninstall() {},
+        async start() {},
+        async restart() {},
+        async stop() {},
+      },
+      pairAuthorizer: async () => ({ actorId: '', changed: false }),
+      taskExecutor: async () => ({ summary: 'ok' }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      updateInspector: async () => ({
+        status: 'update_available',
+        currentVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
+        latestVersion: { branch: 'main', commit: 'def5678', upstreamBranch: 'origin/main' },
+        summary: 'Update available: main@abc1234 -> main@def5678.',
+      }),
+      updatePerformer: async () => {
+        performCalls += 1;
+        return {
+          previousVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
+          currentVersion: { branch: 'main', commit: 'def5678' },
+          summary: 'Update complete: main@abc1234 -> main@def5678.',
+        };
+      },
+      confirmUpdate: async () => {
+        confirmCalls += 1;
+        return true;
+      },
+      stdout: { write() {} },
+      stderr: { write() {} },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(confirmCalls, 0);
+  assert.equal(performCalls, 1);
+});
+
+test('kfc update exits cleanly when the user declines confirmation and surfaces blocked states', async () => {
+  const outputs: string[] = [];
+  const errors: string[] = [];
+  let performCalls = 0;
+
+  const declinedExitCode = await runKfcCli(
+    ['update'],
+    {
+      serviceManager: {
+        async install() {},
+        async uninstall() {},
+        async start() {},
+        async restart() {},
+        async stop() {},
+      },
+      pairAuthorizer: async () => ({ actorId: '', changed: false }),
+      taskExecutor: async () => ({ summary: 'ok' }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      updateInspector: async () => ({
+        status: 'update_available',
+        currentVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
+        latestVersion: { branch: 'main', commit: 'def5678', upstreamBranch: 'origin/main' },
+        summary: 'Update available: main@abc1234 -> main@def5678.',
+      }),
+      updatePerformer: async () => {
+        performCalls += 1;
+        throw new Error('unexpected perform');
+      },
+      confirmUpdate: async () => false,
+      stdout: { write(value) { outputs.push(String(value)); } },
+      stderr: { write(value) { errors.push(String(value)); } },
+    },
+  );
+
+  assert.equal(declinedExitCode, 0);
+  assert.equal(performCalls, 0);
+  assert.ok(outputs.some((entry) => entry.includes('Update cancelled')));
+  assert.deepEqual(errors, []);
+
+  const blockedErrors: string[] = [];
+  const blockedExitCode = await runKfcCli(
+    ['update'],
+    {
+      serviceManager: {
+        async install() {},
+        async uninstall() {},
+        async start() {},
+        async restart() {},
+        async stop() {},
+      },
+      pairAuthorizer: async () => ({ actorId: '', changed: false }),
+      taskExecutor: async () => ({ summary: 'ok' }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      updateInspector: async () => ({
+        status: 'blocked',
+        summary: 'Update blocked: working tree has uncommitted changes.',
+      }),
+      updatePerformer: async () => {
+        throw new Error('unexpected perform');
+      },
+      confirmUpdate: async () => true,
+      stdout: { write() {} },
+      stderr: { write(value) { blockedErrors.push(String(value)); } },
+    },
+  );
+
+  assert.equal(blockedExitCode, 1);
+  assert.ok(blockedErrors.some((entry) => entry.includes('Update blocked: working tree has uncommitted changes.')));
+});
+
 test('kfc service install writes a plist that does not depend on cwd', { concurrency: false }, async () => {
   const previousHome = process.env.HOME;
   const previousConfig = process.env.KIDS_ALFRED_CONFIG;

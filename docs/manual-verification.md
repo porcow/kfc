@@ -32,7 +32,12 @@
    - confirming the request captures the current screen and sends the screenshot image back to the same chat
    - the temporary screenshot file under `~/.kfc/data/screenshot-YYYYMMDD-HHmmss.png` is deleted after successful image delivery
    - if Feishu image upload or send fails, the run surfaces a clear failure and the screenshot file remains on disk for debugging
-8. Trigger one `builtin-tool` task and confirm:
+8. For a bot that explicitly configures task `update`, send `/run update` and confirm:
+   - the bot returns the normal one-shot confirmation card
+   - if the checkout is already current, the confirmed run succeeds with an `already latest` style summary
+   - if a fast-forward update is available, the confirmed run updates the checkout, refreshes the managed service, and reports the new version in the terminal summary
+   - dirty, ahead, diverged, missing-upstream, or fetch-failed repository states produce a clear failed run summary instead of attempting installation
+9. Trigger one `builtin-tool` task and confirm:
    - the task list card shows an example `/run ...` command
    - sending `/run ...` with invalid parameters returns validation feedback without creating a run
    - a confirmation card is shown after valid `/run ...` submission
@@ -42,25 +47,25 @@
    - the run card is informational only and includes `Run ID`, `Task`, `State`, `Actor`, `Started At`, `Finished At`, and `Summary`
    - the originating chat receives a follow-up `running` update and a terminal update
    - status lookup shows the same canonical card shape and the latest persisted state
-9. Trigger one `external-command` task and confirm the same request and run-status flow works.
-10. Click `Cancel` on a pending confirmation and confirm no run is created for that request.
-11. Retry the same confirmation action and confirm no duplicate run is created.
-12. Send `/cancel RUN_ID` for a cancellable running task and confirm it transitions to `cancelled`.
-13. Edit the TOML file without reloading and confirm the active task list does not change.
-14. Trigger reload and confirm the updated task list becomes visible across all valid bots.
-15. Introduce an invalid bot config, trigger reload, and confirm the prior active bot map remains unchanged.
-16. Stop the service during a running task, restart it, and confirm completed runs remain queryable and interrupted runs are marked failed.
-17. Confirm each bot writes to its own SQLite file.
-18. Use a task that returns or fails with a long message and confirm the Feishu `Summary` field is truncated rather than streaming the full output.
-19. Simulate or induce a Feishu push-delivery failure, then confirm `/run-status RUN_ID` still returns the persisted terminal result.
-20. Confirm a failed Feishu milestone push emits a JSON error log with `logType: "feishu_run_update_delivery_failed"` and the affected `runId`.
-21. Send `/cron list` and confirm only cronjob tasks are listed.
-22. Send `/cron start TASK_ID` for a cronjob task from chat A and confirm the current chat is shown as subscribed and the task reports running or already running without restart churn.
-23. Send `/cron start TASK_ID` for the same task from chat B and confirm both chats can remain subscribed while runtime state stays running.
-24. Send `/cron status` and confirm it returns the observed `running/stopped` state for the active bot without current-chat subscription details.
-25. Send `/run TASK_ID ...` for a cronjob task and confirm the bot replies with a mode-mismatch message directing you to `/cron`.
-26. Send `/cron start TASK_ID` for a one-shot task and confirm the bot replies with a mode-mismatch error.
-27. Subscribe one or more chats to `checkPDWin11` with `/cron start check-pd-win11` and confirm:
+10. Trigger one `external-command` task and confirm the same request and run-status flow works.
+11. Click `Cancel` on a pending confirmation and confirm no run is created for that request.
+12. Retry the same confirmation action and confirm no duplicate run is created.
+13. Send `/cancel RUN_ID` for a cancellable running task and confirm it transitions to `cancelled`.
+14. Edit the TOML file without reloading and confirm the active task list does not change.
+15. Trigger reload and confirm the updated task list becomes visible across all valid bots.
+16. Introduce an invalid bot config, trigger reload, and confirm the prior active bot map remains unchanged.
+17. Stop the service during a running task, restart it, and confirm completed runs remain queryable and interrupted runs are marked failed.
+18. Confirm each bot writes to its own SQLite file.
+19. Use a task that returns or fails with a long message and confirm the Feishu `Summary` field is truncated rather than streaming the full output.
+20. Simulate or induce a Feishu push-delivery failure, then confirm `/run-status RUN_ID` still returns the persisted terminal result.
+21. Confirm a failed Feishu milestone push emits a JSON error log with `logType: "feishu_run_update_delivery_failed"` and the affected `runId`.
+22. Send `/cron list` and confirm only cronjob tasks are listed.
+23. Send `/cron start TASK_ID` for a cronjob task from chat A and confirm the current chat is shown as subscribed and the task reports running or already running without restart churn.
+24. Send `/cron start TASK_ID` for the same task from chat B and confirm both chats can remain subscribed while runtime state stays running.
+25. Send `/cron status` and confirm it returns the observed `running/stopped` state for the active bot without current-chat subscription details.
+26. Send `/run TASK_ID ...` for a cronjob task and confirm the bot replies with a mode-mismatch message directing you to `/cron`.
+27. Send `/cron start TASK_ID` for a one-shot task and confirm the bot replies with a mode-mismatch error.
+28. Subscribe one or more chats to `checkPDWin11` with `/cron start check-pd-win11` and confirm:
    - no notification is sent while the observed VM remains off
    - starting the Windows 11 Parallels VM causes exactly one startup notification card per subscribed chat
    - the startup card title is `MC 启动!`
@@ -71,8 +76,8 @@
    - stopping the VM causes exactly one shutdown notification card per subscribed chat
    - the shutdown card title is `MC 下线!`
    - the shutdown card includes detected shutdown time and cumulative runtime in readable format
-28. Send `/cron stop check-pd-win11` and confirm the task stops globally and clears all subscriptions so later transitions do not fan out until `/cron start` is issued again.
-29. Restart the service after a startup notification but before shutdown, then stop the VM and confirm the persisted monitor state still allows the next polling run to emit the correct shutdown notification.
+29. Send `/cron stop check-pd-win11` and confirm the task stops globally and clears all subscriptions so later transitions do not fan out until `/cron start` is issued again.
+30. Restart the service after a startup notification but before shutdown, then stop the VM and confirm the persisted monitor state still allows the next polling run to emit the correct shutdown notification.
 
 ## Pairing Checks
 
@@ -105,11 +110,14 @@
 
 1. Run `./kfc exec --bot ops --task echo-tool` and confirm the task executes locally using its config-defined default parameters, or reports a validation error if the task requires parameters without defaults.
 2. Run `./kfc health` and confirm it returns the same readiness and per-bot WebSocket state model as HTTP `/health`.
-3. Confirm `~/Library/LaunchAgents/com.kidsalfred.service.plist` exists after `./kfc service install --config /path/to/bot.toml`.
-4. Run `./kfc service restart` and confirm the managed main service restarts successfully.
-5. Run `./kfc service stop` and confirm the managed main service stops without changing long-term cronjob policy.
-6. While the plist is still installed, run `./kfc service start` and confirm the managed main service starts successfully.
-7. Run `./kfc service uninstall` and confirm the managed main service is removed from launchd management, all configured bot-scoped cronjobs are unloaded from launchd, their cron plist files are deleted, and `~/Library/LaunchAgents/com.kidsalfred.service.plist` is deleted.
-8. After uninstall, run `./kfc service start`, `./kfc service restart`, and `./kfc service stop` separately and confirm each returns a clear "service is not installed" style error.
-9. Reinstall the service if needed, then run `./kfc uninstall`, answer anything other than `y`/`yes`, and confirm no files are removed.
-10. Run `./kfc uninstall --yes` and confirm the installed app tree, launcher, default config, `~/.kfc`, main-service plist, and configured cronjob launchd state are all removed.
+3. Run `./kfc update` in an up-to-date checkout and confirm it reports the current version without prompting for installation.
+4. Run `./kfc update` when a fast-forward update is available and confirm it prompts before applying the update and refreshes the managed service after confirmation.
+5. Run `./kfc update --yes` and confirm it skips the local confirmation prompt but still blocks dirty, ahead, diverged, or missing-upstream repository states.
+6. Confirm `~/Library/LaunchAgents/com.kidsalfred.service.plist` exists after `./kfc service install --config /path/to/bot.toml`.
+7. Run `./kfc service restart` and confirm the managed main service restarts successfully.
+8. Run `./kfc service stop` and confirm the managed main service stops without changing long-term cronjob policy.
+9. While the plist is still installed, run `./kfc service start` and confirm the managed main service starts successfully.
+10. Run `./kfc service uninstall` and confirm the managed main service is removed from launchd management, all configured bot-scoped cronjobs are unloaded from launchd, their cron plist files are deleted, and `~/Library/LaunchAgents/com.kidsalfred.service.plist` is deleted.
+11. After uninstall, run `./kfc service start`, `./kfc service restart`, and `./kfc service stop` separately and confirm each returns a clear "service is not installed" style error.
+12. Reinstall the service if needed, then run `./kfc uninstall`, answer anything other than `y`/`yes`, and confirm no files are removed.
+13. Run `./kfc uninstall --yes` and confirm the installed app tree, launcher, default config, `~/.kfc`, main-service plist, and configured cronjob launchd state are all removed.

@@ -11,7 +11,7 @@ import {
   translateCronToLaunchd,
   type LaunchdAdapter,
 } from './cron.ts';
-import { defaultAppPath } from './config/paths.ts';
+import { resolveAppEntrypoint } from './config/paths.ts';
 import { RunRepository } from './persistence/run-repository.ts';
 import type { BotConfig, TaskDefinition } from './domain.ts';
 
@@ -147,7 +147,7 @@ test('launchd cron controller writes plist using absolute node entrypoint and av
   const plistPath = join(directory, 'launchd', 'com.kidsalfred.ops.cleanup.plist');
   const plistText = await import('node:fs/promises').then(({ readFile }) => readFile(plistPath, 'utf8'));
   assert.ok(plistText.includes(`<string>${process.execPath}</string>`));
-  assert.ok(plistText.includes(`<string>${resolve(defaultAppPath(), 'src/kfc.ts')}</string>`));
+  assert.ok(plistText.includes(`<string>${resolveAppEntrypoint('src/kfc.ts')}</string>`));
   assert.ok(plistText.includes('<string>--experimental-strip-types</string>'));
   assert.ok(plistText.includes('<key>EnvironmentVariables</key>'));
   assert.ok(plistText.includes('<key>KIDS_ALFRED_CONFIG</key>'));

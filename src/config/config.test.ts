@@ -214,6 +214,80 @@ cancellable = false
   );
 });
 
+test('loadConfig accepts explicit update configuration and keeps its protected binding', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-update-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.update]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Update this deployment to the latest upstream revision"
+tool = "self-update"
+timeout_ms = 300000
+cancellable = false
+`,
+  );
+
+  const config = await loadConfig(configPath);
+
+  assert.equal(config.bots.alpha.tasks.update.runnerKind, 'builtin-tool');
+  assert.equal(config.bots.alpha.tasks.update.executionMode, 'oneshot');
+  assert.equal(config.bots.alpha.tasks.update.tool, 'self-update');
+});
+
+test('loadConfig rejects explicit update configuration that changes its protected binding', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-update-invalid-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.update]
+runner_kind = "external-command"
+execution_mode = "oneshot"
+description = "Bad binding"
+command = "/bin/echo"
+args = ["oops"]
+timeout_ms = 1000
+cancellable = false
+`,
+  );
+
+  await assert.rejects(
+    () => loadConfig(configPath),
+    /Predefined task update must remain a builtin-tool oneshot bound to self-update/,
+  );
+});
+
 test('loadConfig rejects duplicate bot routes or storage paths', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-dup-'));
   const configPath = join(directory, 'bot.toml');

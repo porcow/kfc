@@ -85,6 +85,7 @@ The uninstaller removes:
 - Send `/health` to get an informational health summary for the running service, active bots, and per-bot WebSocket state.
 - Send `/tasks` to get an informational catalog of one-shot tasks for the current bot.
 - Bots only expose `/run sc` when they explicitly configure task `sc`; when enabled, it captures the current screen and returns the image to the same chat after confirmation.
+- Bots only expose `/run update` when they explicitly configure task `update`; when enabled, it checks upstream git state, blocks unsafe repository states, and updates the deployment after confirmation.
 - If your Feishu user is not yet authorized, the bot returns a one-time pairing card with a local admin command in the form `kfc pair BOT_ID-RAND6`.
 - Each task card includes an example `/run TASK_ID key=value ...` command.
 - Send `/run TASK_ID key=value ...` to validate parameters and get an explicit confirmation card for one-shot tasks.
@@ -100,6 +101,8 @@ The uninstaller removes:
 
 - [`kfc`](kfc) is the primary local admin entrypoint.
 - `./kfc health` fetches the running service's configured loopback health endpoint and prints the canonical health snapshot.
+- `./kfc update` checks the current git checkout against its upstream, prompts before applying a fast-forward update, runs installation, and refreshes the managed service.
+- `./kfc update --yes` performs the same update workflow non-interactively once the repository safety checks pass.
 - `./kfc service install` writes or refreshes `~/Library/LaunchAgents/com.kidsalfred.service.plist`, installs launchd management, and starts the main service immediately using `~/.config/kfc/config.toml`.
 - `./kfc service install --config /path/to/bot.toml` does the same using an explicit override path.
 - `./kfc service uninstall` stops the managed service if needed, unloads all configured bot-scoped cronjobs from launchd, removes their cron plist files, and then removes `~/Library/LaunchAgents/com.kidsalfred.service.plist`.
@@ -138,6 +141,7 @@ The uninstaller removes:
 - `Summary` is a concise operator-facing excerpt derived from the persisted run record, not a raw stdout or stderr dump.
 - Feishu summaries are truncated to 300 characters with an ellipsis when necessary.
 - `/run sc` writes a temporary screenshot file under `~/.kfc/data/screenshot-YYYYMMDD-HHmmss.png`, uploads it back to the originating chat, and removes the file only after successful delivery.
+- `/run update` reuses the same fast-forward-only inspection and execution workflow as `kfc update`; it reports `already latest`, `update completed`, or the specific blocking reason in the run summary.
 - If an asynchronous push update fails, the run state remains persisted locally and can still be recovered with `/run-status RUN_ID`.
 
 ## Event Logging

@@ -23,11 +23,22 @@ The system SHALL allow an authorized Feishu user to request the list of availabl
 - **AND** it follows the standard confirmation flow before execution
 - **AND** after confirmation it delivers the resulting screenshot back to the same Feishu chat where the command was issued
 
+#### Scenario: Authorized user requests self-update through the standard run flow
+- **WHEN** an authorized Feishu user sends `/run update`
+- **AND** the current bot has explicitly configured task `update`
+- **THEN** the system treats `update` as a configured oneshot task
+- **AND** it follows the standard confirmation flow before execution
+
 #### Scenario: Authorized user requests the task list
 - **WHEN** a Feishu user in the allowed user list invokes the bot's task-list action
 - **THEN** the system returns the predefined one-shot tasks that are available to that user with their descriptions
 - **AND** the returned card includes an example `/run TASK_ID key=value ...` command string for each listed task
 - **AND** task `sc` appears only when the current bot has explicitly configured it
+
+#### Scenario: Bot omits explicit `update` task configuration
+- **WHEN** a bot does not declare task `update`
+- **THEN** `/run update` is rejected as an unknown task for that bot
+- **AND** `/help` and `/tasks` do not advertise update as an available run target
 
 #### Scenario: Unauthorized user requests the task list
 - **WHEN** a Feishu user outside the allowed user list invokes the bot's task-list action
@@ -121,6 +132,24 @@ The system SHALL send status-oriented updates for a run and allow authorized use
 #### Scenario: Duplicate confirmation is retried
 - **WHEN** Feishu retries or repeats a previously accepted confirmation action
 - **THEN** the system does not create a second run and returns the existing `run_id` or equivalent duplicate-safe response
+
+#### Scenario: Update check reports no available update
+- **WHEN** an authorized user confirms `/run update`
+- **AND** the local service determines that no newer version is available from the tracked git remote
+- **THEN** the run completes successfully without pulling code or reinstalling the service
+- **AND** the Feishu-facing result clearly states that the service is already on the latest version
+
+#### Scenario: Update check reports an available update
+- **WHEN** an authorized user confirms `/run update`
+- **AND** the local service determines that a newer version is available from the tracked git remote
+- **THEN** the system executes the self-update workflow
+- **AND** the final Feishu-facing result states that the update completed
+- **AND** it includes the current version information
+
+#### Scenario: Update execution failure is surfaced through run status
+- **WHEN** `/run update` reaches the execution phase and fetch, pull, or install fails
+- **THEN** the run is marked failed
+- **AND** the Feishu-facing run summary explains which update step failed
 
 ### Requirement: Authorized users can manage cronjob tasks from Feishu
 The system SHALL allow an authorized Feishu user to inspect and control configured cronjob tasks through `/cron` commands without mixing them into the one-shot `/run` flow.
@@ -224,4 +253,3 @@ The system SHALL proactively notify subscribed authorized users when a bot first
 - **WHEN** the system delivers a bot connection event notification
 - **THEN** it addresses the Feishu message to the subscribed user identity for that bot
 - **AND** it does not require an originating chat from a prior command interaction
-

@@ -27,6 +27,15 @@ tool = "screencapture"
 timeout_ms = 30000
 cancellable = false
 
+# Self-update is also opt-in. Declare tasks.update explicitly if this bot should allow /run update.
+[bots.ops.tasks.update]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Update this deployment to the latest upstream revision"
+tool = "self-update"
+timeout_ms = 300000
+cancellable = false
+
 [bots.ops.tasks.say-hello]
 runner_kind = "external-command"
 execution_mode = "oneshot"

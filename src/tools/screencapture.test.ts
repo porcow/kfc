@@ -54,6 +54,7 @@ test('screencapture writes a png file and returns a Feishu image artifact', asyn
 
 test('screencapture surfaces clear capture failures', async () => {
   const tool = createScreencaptureTool({
+    ensureDirectory: async () => {},
     capture: async () => {
       throw new Error('screen recording permission denied');
     },
