@@ -273,14 +273,37 @@ The system SHALL provide a unified local CLI named `kfc` for service lifecycle, 
 - **AND** it removes `~/Library/LaunchAgents/com.kidsalfred.service.plist`
 - **AND** it cancels launchd management for the main service
 
+#### Scenario: Cronjob uninstall falls back to scanning the work directory when the service plist is missing
+- **WHEN** a local administrator executes `kfc service uninstall`
+- **AND** `~/Library/LaunchAgents/com.kidsalfred.service.plist` is missing before cron cleanup can derive `KIDS_ALFRED_CONFIG`
+- **THEN** the system scans `~/.kfc/**/launchd/*.plist` for KFC-managed cronjob plists
+- **AND** it attempts to unload each discovered cronjob from launchd
+- **AND** it removes each discovered cronjob plist file
+
+#### Scenario: Cronjob uninstall falls back to scanning the work directory when installed config cannot be resolved
+- **WHEN** a local administrator executes `kfc service uninstall`
+- **AND** the installed main-service plist exists but cannot be read, does not declare `KIDS_ALFRED_CONFIG`, or references a config that cannot be loaded
+- **THEN** the system continues uninstall by scanning `~/.kfc/**/launchd/*.plist` for KFC-managed cronjob plists
+- **AND** it attempts to unload each discovered cronjob from launchd
+- **AND** it removes each discovered cronjob plist file
+
 #### Scenario: Cronjob uninstall continues across multiple tasks
 - **WHEN** `kfc service uninstall` needs to unload multiple configured cronjob launchd jobs
 - **THEN** it attempts cleanup for each configured cronjob rather than stopping after the first one
+
+#### Scenario: Fallback cronjob uninstall continues across multiple discovered plists
+- **WHEN** `kfc service uninstall` uses the filesystem-scan fallback and finds multiple KFC cronjob plists
+- **THEN** it attempts cleanup for each discovered cronjob plist rather than stopping after the first one
 
 #### Scenario: Cronjob cleanup failure is surfaced
 - **WHEN** `kfc service uninstall` cannot unload or remove one of the configured cronjob launchd jobs
 - **THEN** the system reports a clear operator-facing uninstall error or warning that identifies the affected cronjob
 - **AND** it still attempts cleanup for the remaining configured cronjobs
+
+#### Scenario: Fallback cronjob cleanup failure is surfaced
+- **WHEN** `kfc service uninstall` cannot unload or remove one of the cronjob plists discovered through the filesystem-scan fallback
+- **THEN** the system reports a clear operator-facing uninstall error or warning that identifies the affected plist or launchd label
+- **AND** it still attempts cleanup for the remaining discovered cronjob plists
 
 #### Scenario: Local admin performs a full uninstall through the CLI
 - **WHEN** a local administrator executes `kfc uninstall`

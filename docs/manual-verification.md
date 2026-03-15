@@ -119,6 +119,7 @@
 8. Run `./kfc service stop` and confirm the managed main service stops without changing long-term cronjob policy.
 9. While the plist is still installed, run `./kfc service start` and confirm the managed main service starts successfully.
 10. Run `./kfc service uninstall` and confirm the managed main service is removed from launchd management, all configured bot-scoped cronjobs are unloaded from launchd, their cron plist files are deleted, and `~/Library/LaunchAgents/com.kidsalfred.service.plist` is deleted.
-11. After uninstall, run `./kfc service start`, `./kfc service restart`, and `./kfc service stop` separately and confirm each returns a clear "service is not installed" style error.
-12. Reinstall the service if needed, then run `./kfc uninstall`, answer anything other than `y`/`yes`, and confirm no files are removed.
-13. Run `./kfc uninstall --yes` and confirm the installed app tree, launcher, default config, `~/.kfc`, main-service plist, and configured cronjob launchd state are all removed.
+11. Reinstall a cronjob-enabled config, manually delete `~/Library/LaunchAgents/com.kidsalfred.service.plist` while leaving one or more bot cron plists under `~/.kfc/**/launchd/`, then run `./kfc service uninstall` and confirm the orphaned cronjobs are still unloaded from launchd and their plist files are deleted by fallback scanning.
+12. After uninstall, run `./kfc service start`, `./kfc service restart`, and `./kfc service stop` separately and confirm each returns a clear "service is not installed" style error.
+13. Reinstall the service if needed, then run `./kfc uninstall`, answer anything other than `y`/`yes`, and confirm no files are removed.
+14. Run `./kfc uninstall --yes` and confirm the installed app tree, launcher, default config, `~/.kfc`, main-service plist, and configured cronjob launchd state are all removed.

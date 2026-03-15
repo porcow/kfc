@@ -1083,6 +1083,99 @@ auto_start = false
   }
 });
 
+test('service uninstall falls back to scanning cron plists when the main service plist is missing', async () => {
+  const previousHome = process.env.HOME;
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-uninstall-fallback-missing-'));
+  process.env.HOME = directory;
+
+  const opsSqlitePath = join(directory, '.kfc', 'data', 'ops.sqlite');
+  const supportSqlitePath = join(directory, '.kfc', 'nested', 'data', 'support.sqlite');
+  const servicePlistPath = join(directory, 'Library', 'LaunchAgents', 'com.kidsalfred.service.plist');
+  const opsCronPlist = cronLaunchdPlistPath(opsSqlitePath, 'ops', 'check-pd');
+  const supportCronPlist = cronLaunchdPlistPath(supportSqlitePath, 'support', 'sync-cache');
+
+  await mkdir(join(directory, '.kfc', 'data', 'launchd'), { recursive: true });
+  await mkdir(join(directory, '.kfc', 'nested', 'data', 'launchd'), { recursive: true });
+  await writeFile(opsCronPlist, 'ops', 'utf8');
+  await writeFile(supportCronPlist, 'support', 'utf8');
+
+  const calls: string[] = [];
+  const removed: string[] = [];
+  try {
+    const manager = new LaunchdServiceManager({
+      execFileAsync: async (_file, args) => {
+        calls.push(args.join(' '));
+        return { stdout: '', stderr: '' };
+      },
+      unlink: async (path) => {
+        removed.push(path);
+      },
+    });
+
+    await manager.uninstall();
+
+    assert.deepEqual(calls, [
+      `bootout gui/${process.getuid()} ${opsCronPlist}`,
+      `bootout gui/${process.getuid()} ${supportCronPlist}`,
+      `bootout gui/${process.getuid()}/com.kidsalfred.service`,
+    ]);
+    assert.deepEqual(removed, [opsCronPlist, supportCronPlist, servicePlistPath]);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});
+
+test('service uninstall falls back to scanning cron plists when installed config cannot be loaded', async () => {
+  const previousHome = process.env.HOME;
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-uninstall-fallback-config-'));
+  process.env.HOME = directory;
+
+  const missingConfigPath = join(directory, 'missing.toml');
+  const servicePlistPath = join(directory, 'Library', 'LaunchAgents', 'com.kidsalfred.service.plist');
+  const opsSqlitePath = join(directory, '.kfc', 'data', 'ops.sqlite');
+  const opsCronPlist = cronLaunchdPlistPath(opsSqlitePath, 'ops', 'check-pd');
+
+  await mkdir(join(directory, 'Library', 'LaunchAgents'), { recursive: true });
+  await mkdir(join(directory, '.kfc', 'data', 'launchd'), { recursive: true });
+  await writeFile(
+    servicePlistPath,
+    `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>EnvironmentVariables</key><dict><key>KIDS_ALFRED_CONFIG</key><string>${missingConfigPath}</string></dict></dict></plist>`,
+  );
+  await writeFile(opsCronPlist, 'ops', 'utf8');
+
+  const calls: string[] = [];
+  const removed: string[] = [];
+  try {
+    const manager = new LaunchdServiceManager({
+      execFileAsync: async (_file, args) => {
+        calls.push(args.join(' '));
+        return { stdout: '', stderr: '' };
+      },
+      unlink: async (path) => {
+        removed.push(path);
+      },
+    });
+
+    await manager.uninstall();
+
+    assert.deepEqual(calls, [
+      `bootout gui/${process.getuid()} ${opsCronPlist}`,
+      `bootout gui/${process.getuid()}/com.kidsalfred.service`,
+    ]);
+    assert.deepEqual(removed, [opsCronPlist, servicePlistPath]);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});
+
 test('executeConfiguredTask fans out bot-scoped notification intents to subscribed chats', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-pd-'));
   const configPath = join(directory, 'bot.toml');

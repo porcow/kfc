@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
 import { promisify } from 'node:util';
@@ -33,6 +33,7 @@ export interface CronCleanupTarget {
 interface LaunchdServiceManagerOptions {
   execFileAsync?: typeof execFileAsync;
   access?: typeof access;
+  readdir?: typeof readdir;
   readFile?: typeof readFile;
   unlink?: typeof unlink;
   loadConfig?: typeof loadConfig;
@@ -41,6 +42,7 @@ interface LaunchdServiceManagerOptions {
 export class LaunchdServiceManager implements KfcServiceManager {
   private readonly execFileAsyncImpl: typeof execFileAsync;
   private readonly accessImpl: typeof access;
+  private readonly readdirImpl: typeof readdir;
   private readonly readFileImpl: typeof readFile;
   private readonly unlinkImpl: typeof unlink;
   private readonly loadConfigImpl: typeof loadConfig;
@@ -48,6 +50,7 @@ export class LaunchdServiceManager implements KfcServiceManager {
   constructor(options: LaunchdServiceManagerOptions = {}) {
     this.execFileAsyncImpl = options.execFileAsync ?? execFileAsync;
     this.accessImpl = options.access ?? access;
+    this.readdirImpl = options.readdir ?? readdir;
     this.readFileImpl = options.readFile ?? readFile;
     this.unlinkImpl = options.unlink ?? unlink;
     this.loadConfigImpl = options.loadConfig ?? loadConfig;
@@ -64,39 +67,14 @@ export class LaunchdServiceManager implements KfcServiceManager {
 
   async uninstall(): Promise<void> {
     const plistPath = servicePlistPath();
-    if (!(await isServiceInstalled(this.accessImpl))) {
-      return;
-    }
     const cleanupErrors: string[] = [];
-    const installedConfigPath = await readInstalledServiceConfigPath(
-      plistPath,
-      this.readFileImpl,
-    ).catch((error) => {
-      cleanupErrors.push(
-        `Unable to resolve installed config for cron cleanup: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return undefined;
-    });
-    if (installedConfigPath) {
-      const cronTargets = await listCronCleanupTargets(installedConfigPath, this.loadConfigImpl).catch(
-        (error) => {
-          cleanupErrors.push(
-            `Unable to enumerate configured cronjobs from ${installedConfigPath}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-          return [];
-        },
-      );
-      cleanupErrors.push(
-        ...(await cleanupCronLaunchdJobs(cronTargets, {
-          execFileAsync: this.execFileAsyncImpl,
-          unlink: this.unlinkImpl,
-        })),
-      );
-    }
+    const cronTargets = await this.collectCronCleanupTargets(plistPath, cleanupErrors);
+    cleanupErrors.push(
+      ...(await cleanupCronLaunchdJobs(cronTargets, {
+        execFileAsync: this.execFileAsyncImpl,
+        unlink: this.unlinkImpl,
+      })),
+    );
 
     await this.execFileAsyncImpl('launchctl', ['bootout', `gui/${process.getuid()}/${SERVICE_LABEL}`]).catch(
       () => undefined,
@@ -131,6 +109,65 @@ export class LaunchdServiceManager implements KfcServiceManager {
     await this.execFileAsyncImpl('launchctl', ['bootout', `gui/${process.getuid()}/${SERVICE_LABEL}`]).catch(
       () => undefined,
     );
+  }
+
+  private async collectCronCleanupTargets(
+    plistPath: string,
+    cleanupErrors: string[],
+  ): Promise<CronCleanupTarget[]> {
+    const targets: CronCleanupTarget[] = [];
+    const discoveryErrors: string[] = [];
+    const seen = new Set<string>();
+    const includeTargets = (entries: CronCleanupTarget[]) => {
+      for (const entry of entries) {
+        if (seen.has(entry.plistPath)) {
+          continue;
+        }
+        seen.add(entry.plistPath);
+        targets.push(entry);
+      }
+    };
+
+    const serviceInstalled = await isServiceInstalled(this.accessImpl);
+    if (serviceInstalled) {
+      const installedConfigPath = await readInstalledServiceConfigPath(plistPath, this.readFileImpl).catch(
+        (error) => {
+          discoveryErrors.push(
+            `Unable to resolve installed config for cron cleanup: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return undefined;
+        },
+      );
+      if (installedConfigPath) {
+        const configuredTargets = await listCronCleanupTargets(installedConfigPath, this.loadConfigImpl).catch(
+          (error) => {
+            discoveryErrors.push(
+              `Unable to enumerate configured cronjobs from ${installedConfigPath}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+            return [];
+          },
+        );
+        includeTargets(configuredTargets);
+      }
+    }
+
+    const fallbackTargets = await scanFallbackCronCleanupTargets(this.readdirImpl).catch((error) => {
+      discoveryErrors.push(
+        `Unable to scan fallback cronjob plists under ${workDirPath()}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return [];
+    });
+    includeTargets(fallbackTargets);
+    if (targets.length === 0 || fallbackTargets.length === 0) {
+      cleanupErrors.push(...discoveryErrors);
+    }
+    return targets;
   }
 }
 
@@ -253,4 +290,56 @@ export async function cleanupCronLaunchdJobs(
     });
   }
   return cleanupErrors;
+}
+
+export function workDirPath(): string {
+  const home = process.env.HOME ?? process.cwd();
+  return join(home, '.kfc');
+}
+
+async function scanFallbackCronCleanupTargets(
+  readdirImpl: typeof readdir = readdir,
+): Promise<CronCleanupTarget[]> {
+  const matches: CronCleanupTarget[] = [];
+  await walkLaunchdTrees(workDirPath(), readdirImpl, matches);
+  return matches;
+}
+
+async function walkLaunchdTrees(
+  directory: string,
+  readdirImpl: typeof readdir,
+  matches: CronCleanupTarget[],
+): Promise<void> {
+  let entries;
+  try {
+    entries = await readdirImpl(directory, { withFileTypes: true });
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  }
+
+  for (const entry of entries) {
+    const entryPath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      await walkLaunchdTrees(entryPath, readdirImpl, matches);
+      continue;
+    }
+    if (!entry.isFile()) {
+      continue;
+    }
+    if (!entryPath.includes('/launchd/') || !entry.name.endsWith('.plist')) {
+      continue;
+    }
+    if (!entry.name.startsWith('com.kidsalfred.') || entry.name === `${SERVICE_LABEL}.plist`) {
+      continue;
+    }
+    matches.push({
+      botId: 'unknown',
+      taskId: 'unknown',
+      label: entry.name.slice(0, -'.plist'.length),
+      plistPath: entryPath,
+    });
+  }
 }
