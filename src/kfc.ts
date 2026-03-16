@@ -17,6 +17,7 @@ import {
   readInstalledServiceConfigPath,
   servicePlistPath,
   isServiceInstalled,
+  SERVICE_LABEL,
 } from './service-manager.ts';
 import { inspectRollbackState, inspectUpdateState, performRollback, performSelfUpdate } from './update.ts';
 import type {
