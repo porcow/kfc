@@ -135,3 +135,20 @@
 16. Run `./kfc uninstall --yes` and confirm the installed app tree, launcher, `~/.kfc`, main-service plist, and configured cronjob launchd state are removed while the default config is preserved.
 17. Run `./kfc uninstall --yes --delete-config` and confirm the default config is removed as well.
 18. Reinstall if needed, then run `KFC_DELETE_CONFIG=true ./uninstall.sh` and confirm the script deletes the default config only when explicitly opted in.
+
+## Release Packaging Checks
+
+1. Push or prepare a version tag such as `v0.2.0`, then confirm the GitHub Actions workflow [release-package.yml](/Users/porco/Projects/KidsAlfred/.github/workflows/release-package.yml) runs for that tag.
+2. Confirm the workflow publishes a canonical tarball named `kfc-vX.Y.Z.tar.gz` to the matching GitHub Release.
+3. Confirm the workflow also uploads the companion `kfc-vX.Y.Z.tar.gz.manifest.json`.
+4. Download the tarball and confirm it contains:
+   - `.kfc-release.json`
+   - `src/index.ts`
+   - `src/kfc.ts`
+   - `package.json`
+5. Extract or inspect `.kfc-release.json` from the tarball and confirm:
+   - `repo` matches the GitHub repository slug
+   - `version` matches the release tag
+   - `channel` is `stable`
+   - `asset_name` matches the tarball filename
+6. Confirm a release-based install or `./kfc update` can consume that published tarball without any extra manual asset preparation.

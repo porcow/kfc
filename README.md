@@ -36,6 +36,30 @@ The installer:
 
 The package manager for install is Bun. The installed launcher and managed service also run on Bun.
 
+## Release Packaging
+
+Tagged releases are packaged by GitHub Actions rather than ad hoc archive downloads.
+
+- Push a version tag such as `v0.2.0`.
+- The workflow at [release-package.yml](/Users/porco/Projects/KidsAlfred/.github/workflows/release-package.yml) stages the runtime app root, generates `.kfc-release.json`, and produces the canonical asset `kfc-vX.Y.Z.tar.gz`.
+- The workflow uploads both the tarball and a companion manifest JSON to the matching GitHub Release.
+- `install.sh` and the release-based `kfc update` / `/run update` flows consume that workflow-produced GitHub Release tarball.
+
+The packaged tarball embeds `.kfc-release.json` with:
+- `repo`
+- `version`
+- `channel`
+- `published_at`
+- `asset_name`
+
+The packaging step verifies that the tarball contains:
+- `.kfc-release.json`
+- `src/index.ts`
+- `src/kfc.ts`
+- `package.json`
+
+The embedded `asset_name` must match the uploaded tarball filename, or the workflow fails before publishing.
+
 Useful installer overrides:
 - `KFC_GITHUB_REPO`: alternate GitHub repo slug, default `porcow/kfc`
 - `KFC_RELEASE_API_URL`: alternate GitHub Releases API endpoint, default `https://api.github.com/repos/<repo>/releases/latest`

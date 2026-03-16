@@ -1,0 +1,38 @@
+name: Release Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  package-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Package release asset
+        run: |
+          mkdir -p dist
+          bun scripts/package-release.ts \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --output-dir "$GITHUB_WORKSPACE/dist" \
+            --repo "$GITHUB_REPOSITORY" \
+            --version "$GITHUB_REF_NAME" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Upload GitHub Release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.manifest.json
