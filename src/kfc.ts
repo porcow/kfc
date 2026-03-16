@@ -18,7 +18,7 @@ import {
   servicePlistPath,
   isServiceInstalled,
 } from './service-manager.ts';
-import { inspectUpdateState, performSelfUpdate } from './update.ts';
+import { inspectRollbackState, inspectUpdateState, performRollback, performSelfUpdate } from './update.ts';
 import type {
   AppHealthSnapshot,
   BotConfig,
@@ -45,8 +45,13 @@ export interface KfcCliDeps {
     inspection: Extract<import('./update.ts').UpdateInspection, { status: 'update_available' }>,
   ) => Promise<import('./update.ts').UpdateExecutionResult>;
   confirmUpdate?: (prompt: string) => Promise<boolean>;
+  rollbackInspector?: () => Promise<import('./update.ts').RollbackInspection>;
+  rollbackPerformer?: (
+    inspection: Extract<import('./update.ts').RollbackInspection, { status: 'rollback_available' }>,
+  ) => Promise<import('./update.ts').RollbackExecutionResult>;
+  confirmRollback?: (prompt: string) => Promise<boolean>;
   confirmFullUninstall: (prompt: string) => Promise<boolean>;
-  fullUninstaller: () => Promise<void>;
+  fullUninstaller: (deleteConfig: boolean) => Promise<void>;
   stdout: { write(value: string): void };
   stderr: { write(value: string): void };
 }
@@ -136,7 +141,7 @@ async function listFallbackCronPlists(root: string): Promise<string[]> {
   return results;
 }
 
-async function performFullUninstall(serviceManager: KfcServiceManager): Promise<void> {
+async function performFullUninstall(serviceManager: KfcServiceManager, deleteConfig: boolean): Promise<void> {
   await serviceManager.uninstall().catch(() => undefined);
 
   const plistPath = servicePlistPath();
@@ -153,7 +158,9 @@ async function performFullUninstall(serviceManager: KfcServiceManager): Promise<
   await removeIfExists(installedAppRoot());
   await removeIfExists(workDir);
   await removeIfExists(installedLauncherPath());
-  await removeIfExists(installedConfigPath());
+  if (deleteConfig) {
+    await removeIfExists(installedConfigPath());
+  }
 }
 
 function parseFlags(tokens: string[]): Record<string, string> {
@@ -452,8 +459,17 @@ function createDefaultDeps(): KfcCliDeps {
         },
       }),
     confirmUpdate: async (prompt) => await confirmInteractive(prompt),
+    rollbackInspector: async () => await inspectRollbackState(),
+    rollbackPerformer: async (inspection) =>
+      await performRollback(inspection, {
+        configPath: await resolveUpdateConfigPath(),
+        serviceInstaller: async (configPath) => {
+          await serviceManager.install(configPath);
+        },
+      }),
+    confirmRollback: async (prompt) => await confirmInteractive(prompt),
     confirmFullUninstall: async (prompt) => await confirmInteractive(prompt),
-    fullUninstaller: async () => await performFullUninstall(serviceManager),
+    fullUninstaller: async (deleteConfig) => await performFullUninstall(serviceManager, deleteConfig),
     stdout: process.stdout,
     stderr: process.stderr,
   };
@@ -524,19 +540,47 @@ export async function runKfcCli(argv: string[], deps: KfcCliDeps = createDefault
       return 0;
     }
 
+    if (command === 'rollback') {
+      const flags = parseFlags(rest);
+      if (!deps.rollbackInspector || !deps.rollbackPerformer || !deps.confirmRollback) {
+        throw new Error('Rollback workflow is not available in this CLI context.');
+      }
+      const inspection = await deps.rollbackInspector();
+      if (inspection.status === 'blocked') {
+        throw new Error(inspection.summary);
+      }
+
+      const confirmed = flags['--yes'] === 'true'
+        ? true
+        : await deps.confirmRollback(`${inspection.summary} Continue with rollback? [y/N] `);
+      if (!confirmed) {
+        deps.stdout.write('Rollback cancelled\n');
+        return 0;
+      }
+
+      const result = await deps.rollbackPerformer(inspection);
+      deps.stdout.write(`${result.summary}\n`);
+      return 0;
+    }
+
     if (command === 'uninstall') {
       const flags = parseFlags(rest);
+      const deleteConfig = flags['--delete-config'] === 'true';
       const confirmed = flags['--yes'] === 'true'
         ? true
         : await deps.confirmFullUninstall(
-            'This will remove the installed app, launcher, config, work directory, and launchd state. Continue? [y/N] ',
+            deleteConfig
+              ? 'This will remove the installed app, launcher, work directory, launchd state, and the default config file. Continue? [y/N] '
+              : 'This will remove the installed app, launcher, work directory, and launchd state. The default config will be preserved. Continue? [y/N] ',
           );
       if (!confirmed) {
         deps.stdout.write('Uninstall cancelled\n');
         return 0;
       }
-      await deps.fullUninstaller();
-      deps.stdout.write('Uninstalled kfc\n');
+      await deps.fullUninstaller(deleteConfig);
+      deps.stdout.write(
+        deleteConfig ? 'Uninstalled kfc and deleted the default config\n' : 'Uninstalled kfc and preserved the default config\n',
+      );
       return 0;
     }
 
@@ -582,7 +626,7 @@ export async function runKfcCli(argv: string[], deps: KfcCliDeps = createDefault
       return 0;
     }
 
-    throw new Error('Usage: kfc <service|health|update|pair|exec|uninstall> ...');
+    throw new Error('Usage: kfc <service|health|update|rollback|pair|exec|uninstall> ...');
   } catch (error) {
     deps.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     return 1;

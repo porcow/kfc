@@ -4,10 +4,12 @@ Feishu-operated task runner for macOS hosts. One process can host multiple bot i
 
 ## Quick Start
 
-1. Install dependencies: `npm install`
+1. Install dependencies: `bun install`
 2. Copy [`config/example.bot.toml`](config/example.bot.toml) to a local config file and fill in Feishu credentials.
 3. Install and start the managed service with `./kfc service install --config /path/to/bot.toml`
-4. For local development, run `KIDS_ALFRED_CONFIG=/path/to/bot.toml npm run dev` to watch `src/` and restart the service automatically on source changes.
+4. For local development, run `KIDS_ALFRED_CONFIG=/path/to/bot.toml bun run dev` to watch `src/` and restart the service automatically on source changes.
+
+Dependency installation uses Bun. Repository-local `start`, `dev`, and `test` run on Bun, and the installed service and launcher now run on Bun as well.
 
 Default local paths:
 - Main config defaults to `~/.config/kfc/config.toml`
@@ -25,15 +27,18 @@ curl -fsSL https://raw.githubusercontent.com/porcow/kfc/main/install.sh | sh
 ```
 
 The installer:
-- downloads the GitHub source tarball for `porcow/kfc`
+- downloads the latest stable GitHub Release tarball for `porcow/kfc`
 - installs the app under `~/.local/share/kfc/app`
-- runs `npm install --omit=dev`
+- installs Bun if needed and runs `bun install --production`
 - writes a user-local `kfc` launcher into `~/.local/bin/kfc`
+- records local install state in `~/.local/share/kfc/install-metadata.json`
 - creates `~/.config/kfc/config.toml` from [`config/example.bot.toml`](config/example.bot.toml) if you do not already have one
 
+The package manager for install is Bun. The installed launcher and managed service also run on Bun.
+
 Useful installer overrides:
-- `KFC_REF`: branch or ref name to download, default `main`
 - `KFC_GITHUB_REPO`: alternate GitHub repo slug, default `porcow/kfc`
+- `KFC_RELEASE_API_URL`: alternate GitHub Releases API endpoint, default `https://api.github.com/repos/<repo>/releases/latest`
 - `KFC_INSTALL_DIR`: install root, default `~/.local/share/kfc`
 - `KFC_BIN_DIR`: launcher directory, default `~/.local/bin`
 - `KFC_CONFIG_PATH`: generated config path, default `~/.config/kfc/config.toml`
@@ -65,16 +70,21 @@ Or run the interactive CLI uninstall directly:
 The uninstaller removes:
 - `~/.local/share/kfc`
 - `~/.local/bin/kfc`
-- `~/.config/kfc/config.toml`
 - `~/Library/LaunchAgents/com.kidsalfred.service.plist` after first attempting `kfc uninstall --yes`
 - launchd registrations and plist files for configured cronjobs under the installed config or `~/.kfc/**/launchd/*.plist` as a fallback
+
+By default it preserves `~/.config/kfc/config.toml`. To remove the default config too:
+
+```sh
+KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/main/uninstall.sh | sh
+```
 
 ## Runtime Model
 
 - Feishu event subscriptions use one official SDK WebSocket client per configured bot.
 - Interactive card callbacks and webhook fallback endpoints are exposed over one shared HTTP server using bot-scoped paths.
 - Task definitions are loaded from TOML under `[bots.<id>]` using `runner_kind = "builtin-tool" | "external-command"` plus `execution_mode = "oneshot" | "cronjob"`, and only activate after startup or explicit reload.
-- Run history is stored in a separate SQLite file per bot via the built-in `node:sqlite` module.
+- Run history is stored in a separate SQLite file per bot via Bun's built-in sqlite support.
 - Cronjob desired and observed state is stored separately from one-shot run history and reconciled against `launchd` on startup and reload.
 - `/health` now reports both process liveness and per-bot WebSocket readiness. Use it to distinguish “process is up” from “bot is actually receiving Feishu events”.
 
@@ -85,7 +95,8 @@ The uninstaller removes:
 - Send `/health` to get an informational health summary for the running service, active bots, and per-bot WebSocket state.
 - Send `/tasks` to get an informational catalog of one-shot tasks for the current bot.
 - Bots only expose `/run sc` when they explicitly configure task `sc`; when enabled, it captures the current screen and returns the image to the same chat after confirmation.
-- Bots only expose `/run update` when they explicitly configure task `update`; when enabled, it checks upstream git state, blocks unsafe repository states, and updates the deployment after confirmation.
+- Bots only expose `/run update` when they explicitly configure task `update`; when enabled, it checks the latest stable GitHub Release, stages the new release, refreshes the managed service, and reports either `already latest`, `update completed`, or explicit recovery errors.
+- Bots only expose `/run rollback` when they explicitly configure task `rollback`; when enabled, it swaps to the previous locally installed version after confirmation and refreshes the managed service.
 - If your Feishu user is not yet authorized, the bot returns a one-time pairing card with a local admin command in the form `kfc pair BOT_ID-RAND6`.
 - Each task card includes an example `/run TASK_ID key=value ...` command.
 - Send `/run TASK_ID key=value ...` to validate parameters and get an explicit confirmation card for one-shot tasks.
@@ -101,13 +112,16 @@ The uninstaller removes:
 
 - [`kfc`](kfc) is the primary local admin entrypoint.
 - `./kfc health` fetches the running service's configured loopback health endpoint and prints the canonical health snapshot.
-- `./kfc update` checks the current git checkout against its upstream, prompts before applying a fast-forward update, runs installation, and refreshes the managed service.
-- `./kfc update --yes` performs the same update workflow non-interactively once the repository safety checks pass.
+- `./kfc update` checks the latest stable GitHub Release against the locally installed release metadata, prompts before applying the staged update, and refreshes the managed service.
+- `./kfc update --yes` performs the same release-based update workflow non-interactively once install metadata and the latest stable release are usable.
+- `./kfc rollback` checks whether `app.previous` and matching install metadata are available, prompts before swapping the local app directories, and refreshes the managed service.
+- `./kfc rollback --yes` performs the same rollback workflow non-interactively.
 - `./kfc service install` writes or refreshes `~/Library/LaunchAgents/com.kidsalfred.service.plist`, installs launchd management, and starts the main service immediately using `~/.config/kfc/config.toml`.
 - `./kfc service install --config /path/to/bot.toml` does the same using an explicit override path.
 - `./kfc service uninstall` stops the managed service if needed, unloads all configured bot-scoped cronjobs from launchd, removes their cron plist files, and then removes `~/Library/LaunchAgents/com.kidsalfred.service.plist`.
-- `./kfc uninstall` performs a full user-local uninstall after interactive confirmation, removing launchd state, the installed app tree, launcher, default config, and `~/.kfc`.
+- `./kfc uninstall` performs a full user-local uninstall after interactive confirmation, removing launchd state, the installed app tree, launcher, and `~/.kfc` while preserving the default config.
 - `./kfc uninstall --yes` performs the same full uninstall non-interactively and is intended for scripts such as `uninstall.sh`.
+- `./kfc uninstall --delete-config` or `./kfc uninstall --yes --delete-config` also removes `~/.config/kfc/config.toml`.
 - `./kfc service start` starts an already-installed service.
 - `./kfc service restart` restarts an already-installed service without changing cronjob policy.
 - `./kfc service stop` stops an already-installed service without uninstalling it. Cronjobs still follow their configured `auto_start` policy the next time the service reconciles.
@@ -142,7 +156,8 @@ The uninstaller removes:
 - `Summary` is a concise operator-facing excerpt derived from the persisted run record, not a raw stdout or stderr dump.
 - Feishu summaries are truncated to 300 characters with an ellipsis when necessary.
 - `/run sc` writes a temporary screenshot file under `~/.kfc/data/screenshot-YYYYMMDD-HHmmss.png`, uploads it back to the originating chat, and removes the file only after successful delivery.
-- `/run update` reuses the same fast-forward-only inspection and execution workflow as `kfc update`; it reports `already latest`, `update completed`, or the specific blocking reason in the run summary.
+- `/run update` reuses the same release-based inspection and execution workflow as `kfc update`; it reports `already latest`, `update completed`, `update failed and rolled back`, or explicit blocking/recovery errors in the run summary.
+- `/run rollback` reuses the same local rollback workflow as `kfc rollback`; it reports `rollback completed`, `no rollback version is available`, or explicit restoration errors in the run summary.
 - If an asynchronous push update fails, the run state remains persisted locally and can still be recovered with `/run-status RUN_ID`.
 
 ## Event Logging
@@ -160,6 +175,6 @@ The uninstaller removes:
 
 ## Verification
 
-Run `npm test` to execute the local test suite.
+Run `npm test`, `bun run test`, or `bun test` to execute the local test suite. Bun is now the supported repository test runner.
 
 The manual Feishu verification checklist is in [docs/manual-verification.md](docs/manual-verification.md).

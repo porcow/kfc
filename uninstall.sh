@@ -5,6 +5,7 @@ set -eu
 KFC_INSTALL_DIR="${KFC_INSTALL_DIR:-$HOME/.local/share/kfc}"
 KFC_BIN_DIR="${KFC_BIN_DIR:-$HOME/.local/bin}"
 KFC_CONFIG_PATH="${KFC_CONFIG_PATH:-$HOME/.config/kfc/config.toml}"
+KFC_DELETE_CONFIG="${KFC_DELETE_CONFIG:-false}"
 KFC_WORK_DIR="${KFC_WORK_DIR:-$HOME/.kfc}"
 KFC_PLIST_PATH="${KFC_PLIST_PATH:-$HOME/Library/LaunchAgents/com.kidsalfred.service.plist}"
 KFC_LAUNCH_LABEL="com.kidsalfred.service"
@@ -17,7 +18,11 @@ fi
 
 # Preferred path: invoke `kfc uninstall --yes` when the installed launcher exists.
 if [ -x "${KFC_BIN_PATH}" ]; then
-  "${KFC_BIN_PATH}" uninstall --yes >/dev/null 2>&1 || true
+  if [ "${KFC_DELETE_CONFIG}" = "true" ]; then
+    "${KFC_BIN_PATH}" uninstall --yes --delete-config >/dev/null 2>&1 || true
+  else
+    "${KFC_BIN_PATH}" uninstall --yes >/dev/null 2>&1 || true
+  fi
 fi
 
 if [ -f "${KFC_PLIST_PATH}" ] && command -v launchctl >/dev/null 2>&1; then
@@ -36,7 +41,9 @@ fi
 rm -rf "${KFC_INSTALL_DIR}"
 rm -rf "${KFC_WORK_DIR}"
 rm -f "${KFC_BIN_PATH}"
-rm -f "${KFC_CONFIG_PATH}"
+if [ "${KFC_DELETE_CONFIG}" = "true" ]; then
+  rm -f "${KFC_CONFIG_PATH}"
+fi
 
 cat <<EOF
 Uninstalled kfc from:
@@ -47,4 +54,7 @@ Uninstalled kfc from:
 
 Removed launchd service state from:
   plist:  ${KFC_PLIST_PATH}
+
+Default config handling:
+  delete_config: ${KFC_DELETE_CONFIG}
 EOF

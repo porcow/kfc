@@ -1,9 +1,10 @@
-import test from 'node:test';
+import { test } from './test-compat.ts';
 import assert from 'node:assert/strict';
 
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   LaunchdServiceManager,
@@ -248,9 +249,21 @@ test('kfc update prints already-latest status without confirmation', async () =>
       healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
       updateInspector: async () => ({
         status: 'up_to_date',
-        currentVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
-        latestVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
-        summary: 'Already up to date at main@abc1234.',
+        currentVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.2.0',
+          channel: 'stable',
+          publishedAt: '2026-03-16T00:00:00Z',
+          assetName: 'kfc-v0.2.0.tar.gz',
+        },
+        latestVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.2.0',
+          channel: 'stable',
+          publishedAt: '2026-03-16T00:00:00Z',
+          assetName: 'kfc-v0.2.0.tar.gz',
+        },
+        summary: 'Already at v0.2.0.',
       }),
       updatePerformer: async () => {
         throw new Error('unexpected perform');
@@ -267,7 +280,7 @@ test('kfc update prints already-latest status without confirmation', async () =>
   assert.equal(exitCode, 0);
   assert.equal(confirmCalls, 0);
   assert.deepEqual(errors, []);
-  assert.ok(outputs.some((entry) => entry.includes('Already up to date at main@abc1234.')));
+  assert.ok(outputs.some((entry) => entry.includes('Already at v0.2.0.')));
 });
 
 test('kfc update prompts before performing an available update', async () => {
@@ -291,16 +304,41 @@ test('kfc update prompts before performing an available update', async () => {
       healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
       updateInspector: async () => ({
         status: 'update_available',
-        currentVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
-        latestVersion: { branch: 'main', commit: 'def5678', upstreamBranch: 'origin/main' },
-        summary: 'Update available: main@abc1234 -> main@def5678.',
+        currentVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.1.0',
+          channel: 'stable',
+          publishedAt: '2026-03-16T00:00:00Z',
+          assetName: 'kfc-v0.1.0.tar.gz',
+        },
+        latestVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.2.0',
+          channel: 'stable',
+          publishedAt: '2026-03-16T00:00:00Z',
+          assetName: 'kfc-v0.2.0.tar.gz',
+          downloadUrl: 'https://example.invalid/kfc-v0.2.0.tar.gz',
+        },
+        summary: 'Update available: v0.1.0 -> v0.2.0.',
       }),
       updatePerformer: async () => {
         performCalls += 1;
         return {
-          previousVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
-          currentVersion: { branch: 'main', commit: 'def5678' },
-          summary: 'Update complete: main@abc1234 -> main@def5678.',
+          previousVersion: {
+            repo: 'porcow/kfc',
+            version: 'v0.1.0',
+            channel: 'stable',
+            publishedAt: '2026-03-16T00:00:00Z',
+            assetName: 'kfc-v0.1.0.tar.gz',
+          },
+          currentVersion: {
+            repo: 'porcow/kfc',
+            version: 'v0.2.0',
+            channel: 'stable',
+            publishedAt: '2026-03-16T00:00:00Z',
+            assetName: 'kfc-v0.2.0.tar.gz',
+          },
+          summary: 'Update complete. Current version: v0.2.0.',
         };
       },
       confirmUpdate: async (prompt) => {
@@ -317,7 +355,7 @@ test('kfc update prompts before performing an available update', async () => {
   assert.equal(prompts.length, 1);
   assert.match(prompts[0], /Continue with update\? \[y\/N\]/);
   assert.deepEqual(errors, []);
-  assert.ok(outputs.some((entry) => entry.includes('Update complete: main@abc1234 -> main@def5678.')));
+  assert.ok(outputs.some((entry) => entry.includes('Update complete. Current version: v0.2.0.')));
 });
 
 test('kfc update supports --yes and skips confirmation', async () => {
@@ -339,16 +377,41 @@ test('kfc update supports --yes and skips confirmation', async () => {
       healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
       updateInspector: async () => ({
         status: 'update_available',
-        currentVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
-        latestVersion: { branch: 'main', commit: 'def5678', upstreamBranch: 'origin/main' },
-        summary: 'Update available: main@abc1234 -> main@def5678.',
+        currentVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.1.0',
+          channel: 'stable',
+          publishedAt: '2026-03-16T00:00:00Z',
+          assetName: 'kfc-v0.1.0.tar.gz',
+        },
+        latestVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.2.0',
+          channel: 'stable',
+          publishedAt: '2026-03-16T00:00:00Z',
+          assetName: 'kfc-v0.2.0.tar.gz',
+          downloadUrl: 'https://example.invalid/kfc-v0.2.0.tar.gz',
+        },
+        summary: 'Update available: v0.1.0 -> v0.2.0.',
       }),
       updatePerformer: async () => {
         performCalls += 1;
         return {
-          previousVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
-          currentVersion: { branch: 'main', commit: 'def5678' },
-          summary: 'Update complete: main@abc1234 -> main@def5678.',
+          previousVersion: {
+            repo: 'porcow/kfc',
+            version: 'v0.1.0',
+            channel: 'stable',
+            publishedAt: '2026-03-16T00:00:00Z',
+            assetName: 'kfc-v0.1.0.tar.gz',
+          },
+          currentVersion: {
+            repo: 'porcow/kfc',
+            version: 'v0.2.0',
+            channel: 'stable',
+            publishedAt: '2026-03-16T00:00:00Z',
+            assetName: 'kfc-v0.2.0.tar.gz',
+          },
+          summary: 'Update complete. Current version: v0.2.0.',
         };
       },
       confirmUpdate: async () => {
@@ -385,9 +448,22 @@ test('kfc update exits cleanly when the user declines confirmation and surfaces 
       healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
       updateInspector: async () => ({
         status: 'update_available',
-        currentVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
-        latestVersion: { branch: 'main', commit: 'def5678', upstreamBranch: 'origin/main' },
-        summary: 'Update available: main@abc1234 -> main@def5678.',
+        currentVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.1.0',
+          channel: 'stable',
+          publishedAt: '2026-03-16T00:00:00Z',
+          assetName: 'kfc-v0.1.0.tar.gz',
+        },
+        latestVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.2.0',
+          channel: 'stable',
+          publishedAt: '2026-03-16T00:00:00Z',
+          assetName: 'kfc-v0.2.0.tar.gz',
+          downloadUrl: 'https://example.invalid/kfc-v0.2.0.tar.gz',
+        },
+        summary: 'Update available: v0.1.0 -> v0.2.0.',
       }),
       updatePerformer: async () => {
         performCalls += 1;
@@ -420,7 +496,7 @@ test('kfc update exits cleanly when the user declines confirmation and surfaces 
       healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
       updateInspector: async () => ({
         status: 'blocked',
-        summary: 'Update blocked: working tree has uncommitted changes.',
+        summary: 'Update blocked: install metadata is unusable.',
       }),
       updatePerformer: async () => {
         throw new Error('unexpected perform');
@@ -432,16 +508,152 @@ test('kfc update exits cleanly when the user declines confirmation and surfaces 
   );
 
   assert.equal(blockedExitCode, 1);
-  assert.ok(blockedErrors.some((entry) => entry.includes('Update blocked: working tree has uncommitted changes.')));
+  assert.ok(blockedErrors.some((entry) => entry.includes('Update blocked: install metadata is unusable.')));
+});
+
+test('kfc rollback prompts before performing an available rollback and supports --yes', async () => {
+  const prompts: string[] = [];
+  let confirmCalls = 0;
+  let performCalls = 0;
+
+  const interactiveExitCode = await runKfcCli(
+    ['rollback'],
+    {
+      serviceManager: {
+        async install() {},
+        async uninstall() {},
+        async start() {},
+        async restart() {},
+        async stop() {},
+      },
+      pairAuthorizer: async () => ({ actorId: '', changed: false }),
+      taskExecutor: async () => ({ summary: 'ok' }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      rollbackInspector: async () => ({
+        status: 'rollback_available',
+        currentVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.2.0',
+          channel: 'stable',
+          publishedAt: '2026-03-16T01:00:00Z',
+          assetName: 'kfc-v0.2.0.tar.gz',
+        },
+        previousVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.1.0',
+          channel: 'stable',
+          publishedAt: '2026-03-10T09:00:00Z',
+          assetName: 'kfc-v0.1.0.tar.gz',
+        },
+        summary: 'Rollback available: v0.2.0 -> v0.1.0.',
+      }),
+      rollbackPerformer: async () => {
+        performCalls += 1;
+        return {
+          previousVersion: {
+            repo: 'porcow/kfc',
+            version: 'v0.2.0',
+            channel: 'stable',
+            publishedAt: '2026-03-16T01:00:00Z',
+            assetName: 'kfc-v0.2.0.tar.gz',
+          },
+          currentVersion: {
+            repo: 'porcow/kfc',
+            version: 'v0.1.0',
+            channel: 'stable',
+            publishedAt: '2026-03-10T09:00:00Z',
+            assetName: 'kfc-v0.1.0.tar.gz',
+          },
+          summary: 'Rollback complete. Current version: v0.1.0.',
+        };
+      },
+      confirmRollback: async (prompt) => {
+        confirmCalls += 1;
+        prompts.push(prompt);
+        return true;
+      },
+      stdout: { write() {} },
+      stderr: { write() {} },
+    },
+  );
+
+  assert.equal(interactiveExitCode, 0);
+  assert.equal(confirmCalls, 1);
+  assert.equal(performCalls, 1);
+  assert.match(prompts[0], /Continue with rollback\? \[y\/N\]/);
+
+  confirmCalls = 0;
+  const yesExitCode = await runKfcCli(
+    ['rollback', '--yes'],
+    {
+      serviceManager: {
+        async install() {},
+        async uninstall() {},
+        async start() {},
+        async restart() {},
+        async stop() {},
+      },
+      pairAuthorizer: async () => ({ actorId: '', changed: false }),
+      taskExecutor: async () => ({ summary: 'ok' }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      rollbackInspector: async () => ({
+        status: 'rollback_available',
+        currentVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.2.0',
+          channel: 'stable',
+          publishedAt: '2026-03-16T01:00:00Z',
+          assetName: 'kfc-v0.2.0.tar.gz',
+        },
+        previousVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.1.0',
+          channel: 'stable',
+          publishedAt: '2026-03-10T09:00:00Z',
+          assetName: 'kfc-v0.1.0.tar.gz',
+        },
+        summary: 'Rollback available: v0.2.0 -> v0.1.0.',
+      }),
+      rollbackPerformer: async () => ({
+        previousVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.2.0',
+          channel: 'stable',
+          publishedAt: '2026-03-16T01:00:00Z',
+          assetName: 'kfc-v0.2.0.tar.gz',
+        },
+        currentVersion: {
+          repo: 'porcow/kfc',
+          version: 'v0.1.0',
+          channel: 'stable',
+          publishedAt: '2026-03-10T09:00:00Z',
+          assetName: 'kfc-v0.1.0.tar.gz',
+        },
+        summary: 'Rollback complete. Current version: v0.1.0.',
+      }),
+      confirmRollback: async () => {
+        confirmCalls += 1;
+        return true;
+      },
+      stdout: { write() {} },
+      stderr: { write() {} },
+    },
+  );
+
+  assert.equal(yesExitCode, 0);
+  assert.equal(confirmCalls, 0);
 });
 
 test('kfc service install writes a plist that does not depend on cwd', { concurrency: false }, async () => {
   const previousHome = process.env.HOME;
   const previousConfig = process.env.KIDS_ALFRED_CONFIG;
+  const previousBunBin = process.env.KFC_BUN_BIN;
   const previousCwd = process.cwd();
+  const projectRoot = fileURLToPath(new URL('..', import.meta.url));
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-install-cwd-'));
   const unrelatedDirectory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-cwd-unrelated-'));
   process.env.HOME = directory;
+  process.env.KFC_BUN_BIN = '/tmp/test-bun';
   delete process.env.KIDS_ALFRED_CONFIG;
   await mkdir(join(directory, 'Library', 'LaunchAgents'), { recursive: true });
   const calls: string[] = [];
@@ -459,8 +671,10 @@ test('kfc service install writes a plist that does not depend on cwd', { concurr
 
     const plistPath = join(directory, 'Library', 'LaunchAgents', 'com.kidsalfred.service.plist');
     const plist = await readFile(plistPath, 'utf8');
-    assert.ok(plist.includes(`<string>${join(previousCwd, 'src', 'index.ts')}</string>`));
+    assert.ok(plist.includes('<string>/tmp/test-bun</string>'));
+    assert.ok(plist.includes(`<string>${join(projectRoot, 'src', 'index.ts')}</string>`));
     assert.ok(!plist.includes(`<string>${join(unrelatedDirectory, 'src', 'index.ts')}</string>`));
+    assert.ok(!plist.includes('--experimental-strip-types'));
     assert.deepEqual(calls, [
       `bootout gui/${process.getuid()} ${plistPath}`,
       `bootstrap gui/${process.getuid()} ${plistPath}`,
@@ -477,6 +691,11 @@ test('kfc service install writes a plist that does not depend on cwd', { concurr
       delete process.env.KIDS_ALFRED_CONFIG;
     } else {
       process.env.KIDS_ALFRED_CONFIG = previousConfig;
+    }
+    if (previousBunBin === undefined) {
+      delete process.env.KFC_BUN_BIN;
+    } else {
+      process.env.KFC_BUN_BIN = previousBunBin;
     }
   }
 });
@@ -674,8 +893,8 @@ test('kfc uninstall runs full uninstall after interactive confirmation', async (
         calls.push(`confirm:${prompt}`);
         return true;
       },
-      fullUninstaller: async () => {
-        calls.push('uninstall');
+      fullUninstaller: async (deleteConfig) => {
+        calls.push(`uninstall:${deleteConfig}`);
       },
       stdout: { write(value) { outputs.push(String(value)); } },
       stderr: { write(value) { errors.push(String(value)); } },
@@ -684,8 +903,8 @@ test('kfc uninstall runs full uninstall after interactive confirmation', async (
 
   assert.equal(exitCode, 0);
   assert.deepEqual(errors, []);
-  assert.ok(calls.some((entry) => entry.startsWith('confirm:')));
-  assert.ok(calls.includes('uninstall'));
+  assert.ok(calls.some((entry) => entry.includes('default config will be preserved')));
+  assert.ok(calls.includes('uninstall:false'));
   assert.ok(outputs.some((entry) => entry.includes('Uninstalled kfc')));
 });
 
@@ -711,8 +930,8 @@ test('kfc uninstall aborts cleanly when confirmation is declined', async () => {
         calls.push('confirm');
         return false;
       },
-      fullUninstaller: async () => {
-        calls.push('uninstall');
+      fullUninstaller: async (deleteConfig) => {
+        calls.push(`uninstall:${deleteConfig}`);
       },
       stdout: { write(value) { outputs.push(String(value)); } },
       stderr: { write(value) { errors.push(String(value)); } },
@@ -747,8 +966,8 @@ test('kfc uninstall --yes skips confirmation and uninstalls immediately', async 
         calls.push('confirm');
         return true;
       },
-      fullUninstaller: async () => {
-        calls.push('uninstall');
+      fullUninstaller: async (deleteConfig) => {
+        calls.push(`uninstall:${deleteConfig}`);
       },
       stdout: { write(value) { outputs.push(String(value)); } },
       stderr: { write(value) { errors.push(String(value)); } },
@@ -757,7 +976,80 @@ test('kfc uninstall --yes skips confirmation and uninstalls immediately', async 
 
   assert.equal(exitCode, 0);
   assert.deepEqual(errors, []);
-  assert.deepEqual(calls, ['uninstall']);
+  assert.deepEqual(calls, ['uninstall:false']);
+  assert.ok(outputs.some((entry) => entry.includes('Uninstalled kfc')));
+});
+
+test('kfc uninstall --delete-config updates prompt and deletes config when confirmed', async () => {
+  const outputs: string[] = [];
+  const errors: string[] = [];
+  const calls: string[] = [];
+
+  const exitCode = await runKfcCli(
+    ['uninstall', '--delete-config'],
+    {
+      serviceManager: {
+        async install() {},
+        async uninstall() {},
+        async start() {},
+        async restart() {},
+        async stop() {},
+      },
+      pairAuthorizer: async () => ({ actorId: '', changed: false }),
+      taskExecutor: async () => ({ summary: 'ok' }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      confirmFullUninstall: async (prompt) => {
+        calls.push(`confirm:${prompt}`);
+        return true;
+      },
+      fullUninstaller: async (deleteConfig) => {
+        calls.push(`uninstall:${deleteConfig}`);
+      },
+      stdout: { write(value) { outputs.push(String(value)); } },
+      stderr: { write(value) { errors.push(String(value)); } },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(errors, []);
+  assert.ok(calls.some((entry) => entry.includes('the default config file')));
+  assert.ok(calls.includes('uninstall:true'));
+  assert.ok(outputs.some((entry) => entry.includes('Uninstalled kfc')));
+});
+
+test('kfc uninstall --yes --delete-config skips confirmation and deletes config', async () => {
+  const outputs: string[] = [];
+  const errors: string[] = [];
+  const calls: string[] = [];
+
+  const exitCode = await runKfcCli(
+    ['uninstall', '--yes', '--delete-config'],
+    {
+      serviceManager: {
+        async install() {},
+        async uninstall() {},
+        async start() {},
+        async restart() {},
+        async stop() {},
+      },
+      pairAuthorizer: async () => ({ actorId: '', changed: false }),
+      taskExecutor: async () => ({ summary: 'ok' }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      confirmFullUninstall: async () => {
+        calls.push('confirm');
+        return true;
+      },
+      fullUninstaller: async (deleteConfig) => {
+        calls.push(`uninstall:${deleteConfig}`);
+      },
+      stdout: { write(value) { outputs.push(String(value)); } },
+      stderr: { write(value) { errors.push(String(value)); } },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(calls, ['uninstall:true']);
   assert.ok(outputs.some((entry) => entry.includes('Uninstalled kfc')));
 });
 
@@ -948,12 +1240,12 @@ auto_start = false
 
     await manager.uninstall();
 
-    assert.deepEqual(calls, [
+    assert.deepEqual([...calls].sort(), [
       `bootout gui/${process.getuid()} ${opsCronPlist}`,
       `bootout gui/${process.getuid()} ${supportCronPlist}`,
       `bootout gui/${process.getuid()}/com.kidsalfred.service`,
-    ]);
-    assert.deepEqual(removed, [opsCronPlist, supportCronPlist, servicePlistPath]);
+    ].sort());
+    assert.deepEqual([...removed].sort(), [opsCronPlist, supportCronPlist, servicePlistPath].sort());
   } finally {
     if (previousHome === undefined) {
       delete process.env.HOME;
@@ -1114,12 +1406,12 @@ test('service uninstall falls back to scanning cron plists when the main service
 
     await manager.uninstall();
 
-    assert.deepEqual(calls, [
+    assert.deepEqual([...calls].sort(), [
       `bootout gui/${process.getuid()} ${opsCronPlist}`,
       `bootout gui/${process.getuid()} ${supportCronPlist}`,
       `bootout gui/${process.getuid()}/com.kidsalfred.service`,
-    ]);
-    assert.deepEqual(removed, [opsCronPlist, supportCronPlist, servicePlistPath]);
+    ].sort());
+    assert.deepEqual([...removed].sort(), [opsCronPlist, supportCronPlist, servicePlistPath].sort());
   } finally {
     if (previousHome === undefined) {
       delete process.env.HOME;

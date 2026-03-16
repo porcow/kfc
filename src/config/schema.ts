@@ -41,6 +41,19 @@ function validatePredefinedTask(task: TaskDefinition, path: string): void {
         `Predefined task update must remain a builtin-tool oneshot bound to self-update at ${path}`,
       );
     }
+    return;
+  }
+
+  if (task.id === 'rollback') {
+    if (
+      task.runnerKind !== 'builtin-tool' ||
+      task.executionMode !== 'oneshot' ||
+      task.tool !== 'self-rollback'
+    ) {
+      throw new Error(
+        `Predefined task rollback must remain a builtin-tool oneshot bound to self-rollback at ${path}`,
+      );
+    }
   }
 }
 

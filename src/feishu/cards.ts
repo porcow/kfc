@@ -231,7 +231,9 @@ export function buildCronStatusCard(
   };
 }
 
-export function buildHelpCard(options: { hasScreencaptureTask?: boolean } = {}): CardResponse {
+export function buildHelpCard(
+  options: { hasScreencaptureTask?: boolean; hasUpdateTask?: boolean; hasRollbackTask?: boolean } = {},
+): CardResponse {
   const lines = [
     '`/health`',
     'Show service readiness and per-bot WebSocket health.',
@@ -244,6 +246,12 @@ export function buildHelpCard(options: { hasScreencaptureTask?: boolean } = {}):
   ];
   if (options.hasScreencaptureTask) {
     lines.push('Use `/run sc` to capture the current screen through the standard one-shot flow.');
+  }
+  if (options.hasUpdateTask) {
+    lines.push('Use `/run update` to check the latest stable release and update this deployment after confirmation.');
+  }
+  if (options.hasRollbackTask) {
+    lines.push('Use `/run rollback` to restore the previous locally installed version after confirmation.');
   }
   lines.push(
     '',

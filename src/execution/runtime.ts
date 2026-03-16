@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { resolveAppEntrypoint } from '../config/paths.ts';
+import { resolveAppEntrypoint, resolveBunExecutablePath } from '../config/paths.ts';
 
 import type {
   RunRecord,
@@ -98,11 +98,11 @@ async function runBuiltinToolViaKfc(
   run: RunRecord,
   signal: AbortSignal,
 ): Promise<TaskResult> {
+  const runnerPath = resolveBunExecutablePath();
   return await new Promise<TaskResult>((resolvePromise, rejectPromise) => {
     const child = spawn(
-      process.execPath,
+      runnerPath,
       [
-        '--experimental-strip-types',
         resolveAppEntrypoint('src/kfc.ts'),
         'exec',
         '--task-json',

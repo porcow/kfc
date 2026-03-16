@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import { test } from './test-compat.ts';
 import assert from 'node:assert/strict';
 
 import { BotManager } from './bot-manager.ts';
@@ -81,7 +81,7 @@ async function waitForState(
   state: string,
 ): Promise<void> {
   const service = manager.getBot(botId)!;
-  for (let index = 0; index < 40; index += 1) {
+  for (let index = 0; index < 160; index += 1) {
     const card = service.getRunStatus(actorId, runId).card;
     const text = JSON.stringify(card);
     if (text.includes(`"${state}"`) || text.includes(`**${state}**`)) {

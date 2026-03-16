@@ -1,10 +1,11 @@
-import test from 'node:test';
+import { test } from '../test-compat.ts';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { PDWin11MonitorStateStore } from '../domain.ts';
+import { formatFeishuTimestamp } from '../feishu/timestamp.ts';
 import { RunRepository } from '../persistence/run-repository.ts';
 import { createCheckPDWin11Tool } from './checkPDWin11.ts';
 
@@ -166,7 +167,10 @@ test('checkPDWin11 uses the observation time as startup time on off to on transi
   });
 
   assert.equal(store.getPDWin11State('check-pd')?.detectedStartAt, '2026-03-15T09:30:00.000Z');
-  assert.match(result.notifications?.[0].body ?? '', /2026\/03\/15 17:30:00/u);
+  assert.match(
+    result.notifications?.[0].body ?? '',
+    new RegExp(formatFeishuTimestamp('2026-03-15T09:30:00.000Z'), 'u'),
+  );
   assert.match(result.notifications?.[0].body ?? '', /Current runtime: 0分/u);
 });
 
@@ -238,7 +242,10 @@ test('checkPDWin11 emits first-hour and repeated ten-minute runtime reminders', 
   assert.equal(firstReminder.notifications?.length, 1);
   assert.equal(firstReminder.notifications?.[0].title, 'MC 已运行 1小时');
   assert.match(firstReminder.notifications?.[0].body ?? '', /Windows 11 已运行超过 1 小时/u);
-  assert.match(firstReminder.notifications?.[0].body ?? '', /2026\/03\/13 16:00:00/u);
+  assert.match(
+    firstReminder.notifications?.[0].body ?? '',
+    new RegExp(formatFeishuTimestamp(startTime), 'u'),
+  );
   assert.equal(
     store.getPDWin11State('check-pd')?.lastRuntimeReminderAt,
     '2026-03-13T09:00:00.000Z',

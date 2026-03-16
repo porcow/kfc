@@ -2,7 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { test } from './test-compat.ts';
 
 import { RunRepository } from './persistence/run-repository.ts';
 
@@ -23,4 +23,3 @@ test('repository claims an ingress event key only once within the dedup window',
     repository.close();
   }
 });
-

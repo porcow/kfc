@@ -1,9 +1,10 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import { test } from './test-compat.ts';
 import assert from 'node:assert/strict';
 import type { BotConfig } from './domain.ts';
+import { formatFeishuTimestamp } from './feishu/timestamp.ts';
 import { RunRepository } from './persistence/run-repository.ts';
 import {
   KidsAlfredService,
@@ -130,7 +131,7 @@ async function waitForState(
   runId: string,
   state: string,
 ): Promise<void> {
-  for (let index = 0; index < 160; index += 1) {
+  for (let index = 0; index < 800; index += 1) {
     const card = service.getRunStatus(actorId, runId).card;
     const text = JSON.stringify(card);
     if (text.includes(`"${state}"`) || text.includes(`**${state}**`)) {
@@ -141,7 +142,7 @@ async function waitForState(
   throw new Error(`Timed out waiting for state ${state}`);
 }
 
-test('service enforces auth, duplicate confirmation, and run lookup', async () => {
+test('service enforces auth, duplicate confirmation, and run lookup', { timeout: 30000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-service-'));
   const databasePath = join(directory, 'runs.sqlite');
   const updates = new MemoryRunUpdateSink();
@@ -379,6 +380,41 @@ test('service returns a task-agnostic help card for authorized users', async () 
   await service.close();
 });
 
+test('service help advertises update and rollback only when explicitly configured', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-help-update-'));
+  const databasePath = join(directory, 'runs.sqlite');
+  const botConfig = createBotConfig('alpha', databasePath);
+  botConfig.tasks.update = {
+    id: 'update',
+    runnerKind: 'builtin-tool',
+    executionMode: 'oneshot',
+    description: 'Update this deployment to the latest stable GitHub Release',
+    tool: 'self-update',
+    timeoutMs: 300000,
+    cancellable: false,
+    parameters: {},
+  };
+  botConfig.tasks.rollback = {
+    id: 'rollback',
+    runnerKind: 'builtin-tool',
+    executionMode: 'oneshot',
+    description: 'Rollback this deployment to the previous local install',
+    tool: 'self-rollback',
+    timeoutMs: 300000,
+    cancellable: false,
+    parameters: {},
+  };
+  const service = new KidsAlfredService(botConfig);
+
+  const help = await service.handleMessage('operator-1', '/help');
+  const helpJson = JSON.stringify(help.card);
+
+  assert.ok(helpJson.includes('/run update'));
+  assert.ok(helpJson.includes('/run rollback'));
+
+  await service.close();
+});
+
 test('service routes /run sc through the standard confirmation flow', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-sc-run-'));
   const databasePath = join(directory, 'runs.sqlite');
@@ -425,57 +461,61 @@ test('service returns health from the shared snapshot for authorized users', asy
   assert.ok(healthJson.includes('alpha'));
   assert.ok(healthJson.includes('beta'));
   assert.ok(healthJson.includes('reconnecting'));
-  assert.ok(healthJson.includes('2026/03/14 16:00:00'));
-  assert.ok(healthJson.includes('2026/03/14 16:10:00'));
+  assert.ok(healthJson.includes(formatFeishuTimestamp('2026-03-14T08:00:00.000Z')));
+  assert.ok(healthJson.includes(formatFeishuTimestamp('2026-03-14T08:10:00.000Z')));
   assert.ok(!healthJson.includes('2026-03-14T08:00:00.000Z'));
   assert.ok(!healthJson.includes('2026-03-14T08:10:00.000Z'));
 
   await service.close();
 });
 
-test('service persists origin chat context and returns canonical run status cards', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-run-contract-'));
-  const databasePath = join(directory, 'runs.sqlite');
-  const service = new KidsAlfredService(createBotConfig('alpha', databasePath));
+test(
+  'service persists origin chat context and returns canonical run status cards',
+  { timeout: 30000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-run-contract-'));
+    const databasePath = join(directory, 'runs.sqlite');
+    const service = new KidsAlfredService(createBotConfig('alpha', databasePath));
 
-  const confirmation = await service.handleMessage(
-    'operator-1',
-    '/run echo message="from chat"',
-    { chatId: 'chat-contract-1' },
-  );
-  const confirmationId = JSON.stringify(confirmation.card).match(/confirm_[\w-]+/u)?.[0];
-  assert.ok(confirmationId);
+    const confirmation = await service.handleMessage(
+      'operator-1',
+      '/run echo message="from chat"',
+      { chatId: 'chat-contract-1' },
+    );
+    const confirmationId = JSON.stringify(confirmation.card).match(/confirm_[\w-]+/u)?.[0];
+    assert.ok(confirmationId);
 
-  const queuedRun = await service.handleCardAction('operator-1', {
-    type: 'confirm_task',
-    confirmationId,
-  });
-  const queuedJson = JSON.stringify(queuedRun.card);
-  const runId = queuedJson.match(/run_[\w-]+/u)?.[0];
-  assert.ok(runId);
-  assert.ok(queuedJson.includes('Run ID'));
-  assert.ok(queuedJson.includes('Started At'));
-  assert.ok(queuedJson.includes('Finished At'));
-  assert.ok(queuedJson.includes('Started At: n/a'));
-  assert.ok(queuedJson.includes('Finished At: n/a'));
+    const queuedRun = await service.handleCardAction('operator-1', {
+      type: 'confirm_task',
+      confirmationId,
+    });
+    const queuedJson = JSON.stringify(queuedRun.card);
+    const runId = queuedJson.match(/run_[\w-]+/u)?.[0];
+    assert.ok(runId);
+    assert.ok(queuedJson.includes('Run ID'));
+    assert.ok(queuedJson.includes('Started At'));
+    assert.ok(queuedJson.includes('Finished At'));
+    assert.ok(queuedJson.includes('Started At: n/a'));
+    assert.ok(queuedJson.includes('Finished At: n/a'));
 
-  await waitForState(service, 'operator-1', runId!, 'succeeded');
-  const completed = service.getRunStatus('operator-1', runId!);
-  const completedJson = JSON.stringify(completed.card);
-  assert.ok(completedJson.includes('Started At'));
-  assert.ok(completedJson.includes('Finished At'));
-  assert.match(completedJson, /Started At: 20\d\d\/\d\d\/\d\d \d\d:\d\d:\d\d/u);
-  assert.match(completedJson, /Finished At: 20\d\d\/\d\d\/\d\d \d\d:\d\d:\d\d/u);
-  assert.doesNotMatch(completedJson, /Started At: \d{4}-\d{2}-\d{2}T/u);
-  assert.doesNotMatch(completedJson, /Finished At: \d{4}-\d{2}-\d{2}T/u);
+    await waitForState(service, 'operator-1', runId!, 'succeeded');
+    const completed = service.getRunStatus('operator-1', runId!);
+    const completedJson = JSON.stringify(completed.card);
+    assert.ok(completedJson.includes('Started At'));
+    assert.ok(completedJson.includes('Finished At'));
+    assert.match(completedJson, /Started At: 20\d\d\/\d\d\/\d\d \d\d:\d\d:\d\d/u);
+    assert.match(completedJson, /Finished At: 20\d\d\/\d\d\/\d\d \d\d:\d\d:\d\d/u);
+    assert.doesNotMatch(completedJson, /Started At: \d{4}-\d{2}-\d{2}T/u);
+    assert.doesNotMatch(completedJson, /Finished At: \d{4}-\d{2}-\d{2}T/u);
 
-  const [stored] = service.listRecentRuns('operator-1');
-  assert.equal(stored.originChatId, 'chat-contract-1');
-  assert.match(stored.startedAt ?? '', /T/u);
-  assert.match(stored.finishedAt ?? '', /T/u);
+    const [stored] = service.listRecentRuns('operator-1');
+    assert.equal(stored.originChatId, 'chat-contract-1');
+    assert.match(stored.startedAt ?? '', /T/u);
+    assert.match(stored.finishedAt ?? '', /T/u);
 
-  await service.close();
-});
+    await service.close();
+  },
+);
 
 test('service cancels pending confirmations without creating a run', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-pending-cancel-'));

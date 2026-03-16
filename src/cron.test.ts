@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test } from './test-compat.ts';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -117,9 +117,11 @@ test('repository stores cron chat subscriptions without duplicates and clears th
   repository.close();
 });
 
-test('launchd cron controller writes plist using absolute node entrypoint and avoids restart when already running', async () => {
+test('launchd cron controller writes plist using absolute bun entrypoint and avoids restart when already running', async () => {
+  const previousBunBin = process.env.KFC_BUN_BIN;
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-launchd-cron-'));
   const sqlitePath = join(directory, 'cron.sqlite');
+  process.env.KFC_BUN_BIN = '/tmp/test-bun';
   const repository = new RunRepository(sqlitePath);
   const calls: string[] = [];
 
@@ -146,12 +148,17 @@ test('launchd cron controller writes plist using absolute node entrypoint and av
 
   const plistPath = join(directory, 'launchd', 'com.kidsalfred.ops.cleanup.plist');
   const plistText = await import('node:fs/promises').then(({ readFile }) => readFile(plistPath, 'utf8'));
-  assert.ok(plistText.includes(`<string>${process.execPath}</string>`));
+  assert.ok(plistText.includes('<string>/tmp/test-bun</string>'));
   assert.ok(plistText.includes(`<string>${resolveAppEntrypoint('src/kfc.ts')}</string>`));
-  assert.ok(plistText.includes('<string>--experimental-strip-types</string>'));
+  assert.ok(!plistText.includes('--experimental-strip-types'));
   assert.ok(plistText.includes('<key>EnvironmentVariables</key>'));
   assert.ok(plistText.includes('<key>KIDS_ALFRED_CONFIG</key>'));
   assert.ok(!plistText.includes(`<string>${resolve(process.cwd(), 'kfc')}</string>`));
 
   repository.close();
+  if (previousBunBin === undefined) {
+    delete process.env.KFC_BUN_BIN;
+  } else {
+    process.env.KFC_BUN_BIN = previousBunBin;
+  }
 });

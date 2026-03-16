@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { test } from '../test-compat.ts';
 
 import { createSelfUpdateTool } from './self-update.ts';
 
@@ -8,9 +8,21 @@ test('self-update tool reports already-latest inspection results without executi
   const tool = createSelfUpdateTool({
     inspect: async () => ({
       status: 'up_to_date',
-      currentVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
-      latestVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
-      summary: 'Already up to date at main@abc1234.',
+      currentVersion: {
+        repo: 'porcow/kfc',
+        version: 'v0.2.0',
+        channel: 'stable',
+        publishedAt: '2026-03-16T00:00:00Z',
+        assetName: 'kfc-v0.2.0.tar.gz',
+      },
+      latestVersion: {
+        repo: 'porcow/kfc',
+        version: 'v0.2.0',
+        channel: 'stable',
+        publishedAt: '2026-03-16T00:00:00Z',
+        assetName: 'kfc-v0.2.0.tar.gz',
+      },
+      summary: 'Already at v0.2.0.',
     }),
     perform: async () => {
       performCalls += 1;
@@ -36,78 +48,89 @@ test('self-update tool reports already-latest inspection results without executi
   });
 
   assert.equal(performCalls, 0);
-  assert.equal(result.summary, 'Already up to date at main@abc1234.');
+  assert.equal(result.summary, 'Already at v0.2.0.');
 });
 
-test('self-update tool executes available updates and surfaces blocked states as errors', async (t) => {
-  await t.test('available update', async () => {
-    let performCalls = 0;
-    const tool = createSelfUpdateTool({
-      inspect: async () => ({
-        status: 'update_available',
-        currentVersion: { branch: 'main', commit: 'abc1234', upstreamBranch: 'origin/main' },
-        latestVersion: { branch: 'main', commit: 'def5678', upstreamBranch: 'origin/main' },
-        summary: 'Update available: main@abc1234 -> main@def5678.',
-      }),
-      perform: async (inspection) => {
-        performCalls += 1;
-        assert.equal(inspection.status, 'update_available');
-        return {
-          previousVersion: inspection.currentVersion,
-          currentVersion: inspection.latestVersion,
-          summary: 'Update complete: main@abc1234 -> main@def5678.',
-        };
+test('self-update tool executes available updates', async () => {
+  let performCalls = 0;
+  const tool = createSelfUpdateTool({
+    inspect: async () => ({
+      status: 'update_available',
+      currentVersion: {
+        repo: 'porcow/kfc',
+        version: 'v0.1.0',
+        channel: 'stable',
+        publishedAt: '2026-03-16T00:00:00Z',
+        assetName: 'kfc-v0.1.0.tar.gz',
       },
-    });
+      latestVersion: {
+        repo: 'porcow/kfc',
+        version: 'v0.2.0',
+        channel: 'stable',
+        publishedAt: '2026-03-16T00:00:00Z',
+        assetName: 'kfc-v0.2.0.tar.gz',
+        downloadUrl: 'https://example.invalid/kfc-v0.2.0.tar.gz',
+      },
+      summary: 'Update available: v0.1.0 -> v0.2.0.',
+    }),
+    perform: async (inspection) => {
+      performCalls += 1;
+      assert.equal(inspection.status, 'update_available');
+      return {
+        previousVersion: inspection.currentVersion,
+        currentVersion: inspection.latestVersion,
+        summary: 'Update complete. Current version: v0.2.0.',
+      };
+    },
+  });
 
-    const result = await tool.execute({
-      runId: 'run_2',
-      signal: new AbortController().signal,
-      task: {
-        id: 'update',
-        runnerKind: 'builtin-tool',
-        executionMode: 'oneshot',
-        description: 'Update this deployment',
-        tool: 'self-update',
-        timeoutMs: 300000,
-        cancellable: false,
-        parameters: {},
-      },
-      actorId: 'operator-1',
+  const result = await tool.execute({
+    runId: 'run_2',
+    signal: new AbortController().signal,
+    task: {
+      id: 'update',
+      runnerKind: 'builtin-tool',
+      executionMode: 'oneshot',
+      description: 'Update this deployment',
+      tool: 'self-update',
+      timeoutMs: 300000,
+      cancellable: false,
       parameters: {},
-    });
-
-    assert.equal(performCalls, 1);
-    assert.equal(result.summary, 'Update complete: main@abc1234 -> main@def5678.');
+    },
+    actorId: 'operator-1',
+    parameters: {},
   });
 
-  await t.test('blocked update', async () => {
-    const tool = createSelfUpdateTool({
-      inspect: async () => ({
-        status: 'blocked',
-        summary: 'Update blocked: working tree has uncommitted changes.',
-      }),
-    });
+  assert.equal(performCalls, 1);
+  assert.equal(result.summary, 'Update complete. Current version: v0.2.0.');
+});
 
-    await assert.rejects(
-      () =>
-        tool.execute({
-          runId: 'run_3',
-          signal: new AbortController().signal,
-          task: {
-            id: 'update',
-            runnerKind: 'builtin-tool',
-            executionMode: 'oneshot',
-            description: 'Update this deployment',
-            tool: 'self-update',
-            timeoutMs: 300000,
-            cancellable: false,
-            parameters: {},
-          },
-          actorId: 'operator-1',
+test('self-update tool surfaces blocked states as errors', async () => {
+  const tool = createSelfUpdateTool({
+    inspect: async () => ({
+      status: 'blocked',
+      summary: 'Update blocked: install metadata is unusable.',
+    }),
+  });
+
+  await assert.rejects(
+    () =>
+      tool.execute({
+        runId: 'run_3',
+        signal: new AbortController().signal,
+        task: {
+          id: 'update',
+          runnerKind: 'builtin-tool',
+          executionMode: 'oneshot',
+          description: 'Update this deployment',
+          tool: 'self-update',
+          timeoutMs: 300000,
+          cancellable: false,
           parameters: {},
-        }),
-      /Update blocked: working tree has uncommitted changes./,
-    );
-  });
+        },
+        actorId: 'operator-1',
+        parameters: {},
+      }),
+    /Update blocked: install metadata is unusable./,
+  );
 });

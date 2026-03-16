@@ -2,7 +2,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { test } from './test-compat.ts';
 
 import { BotManager } from './bot-manager.ts';
 import { loadConfig } from './config/schema.ts';

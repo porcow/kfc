@@ -1,7 +1,7 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import { test } from '../test-compat.ts';
 import assert from 'node:assert/strict';
 
 import { loadConfig, validateParameters } from './schema.ts';
@@ -285,6 +285,80 @@ cancellable = false
   await assert.rejects(
     () => loadConfig(configPath),
     /Predefined task update must remain a builtin-tool oneshot bound to self-update/,
+  );
+});
+
+test('loadConfig accepts explicit rollback configuration and keeps its protected binding', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-rollback-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.rollback]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Rollback this deployment to the previous local install"
+tool = "self-rollback"
+timeout_ms = 300000
+cancellable = false
+`,
+  );
+
+  const config = await loadConfig(configPath);
+
+  assert.equal(config.bots.alpha.tasks.rollback.runnerKind, 'builtin-tool');
+  assert.equal(config.bots.alpha.tasks.rollback.executionMode, 'oneshot');
+  assert.equal(config.bots.alpha.tasks.rollback.tool, 'self-rollback');
+});
+
+test('loadConfig rejects explicit rollback configuration that changes its protected binding', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-rollback-invalid-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.rollback]
+runner_kind = "external-command"
+execution_mode = "oneshot"
+description = "Bad rollback binding"
+command = "/bin/echo"
+args = ["oops"]
+timeout_ms = 1000
+cancellable = false
+`,
+  );
+
+  await assert.rejects(
+    () => loadConfig(configPath),
+    /Predefined task rollback must remain a builtin-tool oneshot bound to self-rollback/,
   );
 });
 

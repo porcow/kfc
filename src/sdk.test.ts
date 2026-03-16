@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import { test } from './test-compat.ts';
 
 import type { RunRecord } from './domain.ts';
 import { buildRunStatusCard } from './feishu/cards.ts';
+import { formatFeishuTimestamp } from './feishu/timestamp.ts';
 import {
   applyWebSocketLogEvent,
   createEventDispatcherHandlers,
@@ -487,8 +488,8 @@ test('run status cards normalize long summaries and include canonical fields', (
   assert.ok(json.includes('Run ID'));
   assert.ok(json.includes('Started At'));
   assert.ok(json.includes('Finished At'));
-  assert.ok(json.includes('2026/03/12 18:01:00'));
-  assert.ok(json.includes('2026/03/12 18:02:00'));
+  assert.ok(json.includes(formatFeishuTimestamp('2026-03-12T10:01:00.000Z')));
+  assert.ok(json.includes(formatFeishuTimestamp('2026-03-12T10:02:00.000Z')));
   assert.ok(!json.includes('2026-03-12T10:01:00.000Z'));
   assert.ok(json.includes('...'));
   assert.ok(!json.includes('x'.repeat(320)));

@@ -31,8 +31,17 @@ cancellable = false
 [bots.ops.tasks.update]
 runner_kind = "builtin-tool"
 execution_mode = "oneshot"
-description = "Update this deployment to the latest upstream revision"
+description = "Update this deployment to the latest stable GitHub Release"
 tool = "self-update"
+timeout_ms = 300000
+cancellable = false
+
+# Rollback is also opt-in. Declare tasks.rollback explicitly if this bot should allow /run rollback.
+[bots.ops.tasks.rollback]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Rollback this deployment to the previous locally installed version"
+tool = "self-rollback"
 timeout_ms = 300000
 cancellable = false
 

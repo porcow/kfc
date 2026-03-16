@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import process from 'node:process';
 import { promisify } from 'node:util';
 
-import { resolveAppEntrypoint } from './config/paths.ts';
+import { resolveAppEntrypoint, resolveBunExecutablePath } from './config/paths.ts';
 import { loadConfig } from './config/schema.ts';
 import { buildLaunchdLabel, cronLaunchdPlistPath } from './cron.ts';
 
@@ -174,6 +174,7 @@ export class LaunchdServiceManager implements KfcServiceManager {
 async function writeServicePlist(configPath: string): Promise<string> {
   const plistPath = servicePlistPath();
   const sourcePath = resolveAppEntrypoint('src/index.ts');
+  const bunPath = resolveBunExecutablePath();
   await mkdir(join(process.env.HOME ?? process.cwd(), 'Library', 'LaunchAgents'), { recursive: true });
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -183,8 +184,7 @@ async function writeServicePlist(configPath: string): Promise<string> {
     <string>${SERVICE_LABEL}</string>
     <key>ProgramArguments</key>
     <array>
-      <string>${process.execPath}</string>
-      <string>--experimental-strip-types</string>
+      <string>${bunPath}</string>
       <string>${sourcePath}</string>
     </array>
     <key>EnvironmentVariables</key>

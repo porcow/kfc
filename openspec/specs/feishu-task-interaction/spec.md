@@ -133,23 +133,70 @@ The system SHALL send status-oriented updates for a run and allow authorized use
 - **WHEN** Feishu retries or repeats a previously accepted confirmation action
 - **THEN** the system does not create a second run and returns the existing `run_id` or equivalent duplicate-safe response
 
-#### Scenario: Update check reports no available update
+#### Scenario: Release update check reports no available update
 - **WHEN** an authorized user confirms `/run update`
-- **AND** the local service determines that no newer version is available from the tracked git remote
-- **THEN** the run completes successfully without pulling code or reinstalling the service
+- **AND** the local service determines that no newer supported GitHub Release is available
+- **THEN** the run completes successfully without downloading or reinstalling a release asset
 - **AND** the Feishu-facing result clearly states that the service is already on the latest version
 
-#### Scenario: Update check reports an available update
+#### Scenario: Release update inspection uses only the latest stable release
 - **WHEN** an authorized user confirms `/run update`
-- **AND** the local service determines that a newer version is available from the tracked git remote
-- **THEN** the system executes the self-update workflow
+- **AND** the local service inspects remote release availability
+- **THEN** it uses only the latest stable GitHub Release for update comparison
+- **AND** it excludes draft and prerelease releases from update availability decisions
+
+#### Scenario: Release update check reports an available update
+- **WHEN** an authorized user confirms `/run update`
+- **AND** the local service determines that a newer supported GitHub Release is available
+- **THEN** the system executes the release-based self-update workflow
 - **AND** the final Feishu-facing result states that the update completed
 - **AND** it includes the current version information
 
 #### Scenario: Update execution failure is surfaced through run status
-- **WHEN** `/run update` reaches the execution phase and fetch, pull, or install fails
+- **WHEN** `/run update` reaches the execution phase and release lookup, download, extraction, dependency install, verification, or service refresh fails
 - **THEN** the run is marked failed
 - **AND** the Feishu-facing run summary explains which update step failed
+
+#### Scenario: Update execution failure reports successful automatic rollback
+- **WHEN** `/run update` has already activated the staged app
+- **AND** the subsequent service refresh fails
+- **AND** the system successfully restores the previous local install automatically
+- **THEN** the run is marked failed
+- **AND** the Feishu-facing run summary states that the update failed
+- **AND** it explicitly states that the service was rolled back to the restored previous version
+
+#### Scenario: Update execution failure reports failed automatic rollback
+- **WHEN** `/run update` has already activated the staged app
+- **AND** the subsequent service refresh fails
+- **AND** the system cannot restore the previous local install automatically
+- **THEN** the run is marked failed
+- **AND** the Feishu-facing run summary states that both update and automatic rollback failed
+- **AND** it instructs the operator that manual recovery is required
+
+#### Scenario: Rollback is unavailable
+- **WHEN** an authorized user confirms `/run rollback`
+- **AND** no previous locally installed version is available
+- **THEN** the run is marked failed
+- **AND** the Feishu-facing run summary clearly states that no rollback version is available
+
+#### Scenario: Rollback completes successfully
+- **WHEN** an authorized user confirms `/run rollback`
+- **AND** a previous locally installed version is available
+- **THEN** the system swaps to that previous version and refreshes the managed service
+- **AND** the final Feishu-facing result states that rollback completed
+- **AND** it includes the current version information
+
+#### Scenario: Rollback execution failure is surfaced through run status
+- **WHEN** `/run rollback` reaches the execution phase and validation, filesystem swap, or service refresh fails
+- **THEN** the run is marked failed
+- **AND** the Feishu-facing run summary explains which rollback step failed
+
+#### Scenario: Rollback execution failure reports automatic restore status
+- **WHEN** `/run rollback` has already started swapping `app` and `app.previous`
+- **AND** the subsequent validation or service refresh fails
+- **THEN** the run is marked failed
+- **AND** the Feishu-facing run summary explains which rollback step failed
+- **AND** it states whether the service was automatically restored to the last known runnable version or whether manual recovery is required
 
 ### Requirement: Authorized users can manage cronjob tasks from Feishu
 The system SHALL allow an authorized Feishu user to inspect and control configured cronjob tasks through `/cron` commands without mixing them into the one-shot `/run` flow.
@@ -253,3 +300,15 @@ The system SHALL proactively notify subscribed authorized users when a bot first
 - **WHEN** the system delivers a bot connection event notification
 - **THEN** it addresses the Feishu message to the subscribed user identity for that bot
 - **AND** it does not require an originating chat from a prior command interaction
+
+### Requirement: Feishu integration remains functional under Bun-only runtime support
+The system SHALL preserve its Feishu command, card, messaging, and upload behavior when Bun is the only supported runtime.
+
+#### Scenario: Feishu SDK-dependent test paths remain runnable under Bun
+- **WHEN** the project executes its supported Bun test suite
+- **THEN** the Feishu SDK-dependent tests pass without relying on a Node runtime fallback
+
+#### Scenario: Bun-only runtime preserves Feishu command handling
+- **WHEN** the service handles Feishu text commands, card callbacks, and result delivery under the supported runtime
+- **THEN** the system preserves the existing Feishu-facing behavior for task execution, status cards, health replies, and uploads
+

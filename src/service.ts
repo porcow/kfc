@@ -313,6 +313,12 @@ export class KidsAlfredService {
       && this.config.tasks.sc?.tool === 'screencapture';
   }
 
+  private hasProtectedBuiltinTask(taskId: string, tool: string): boolean {
+    return this.config.tasks[taskId]?.runnerKind === 'builtin-tool'
+      && this.config.tasks[taskId]?.executionMode === 'oneshot'
+      && this.config.tasks[taskId]?.tool === tool;
+  }
+
   private buildUnsupportedCommandMessage(): string {
     const runExample = this.hasScreencaptureTask() ? ' (for example `/run sc`)' : '';
     return `Unsupported command. Use /help, /health, /tasks, /run TASK_ID key=value ...${runExample}, /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.`;
@@ -525,6 +531,8 @@ export class KidsAlfredService {
       if (trimmed === '/help') {
         const response = buildHelpCard({
           hasScreencaptureTask: this.hasScreencaptureTask(),
+          hasUpdateTask: this.hasProtectedBuiltinTask('update', 'self-update'),
+          hasRollbackTask: this.hasProtectedBuiltinTask('rollback', 'self-rollback'),
         });
         await this.logEvent({
           actorId,

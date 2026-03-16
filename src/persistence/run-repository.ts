@@ -1,7 +1,6 @@
 import { randomInt } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 
 import type {
   CronChatSubscriptionRecord,
@@ -16,15 +15,16 @@ import type {
   ServiceEventSubscriptionRecord,
   ServiceEventType,
 } from '../domain.ts';
+import { openSqliteDatabase, type SQLiteDatabase } from './sqlite.ts';
 
 export class RunRepository {
-  readonly database: DatabaseSync;
+  readonly database: SQLiteDatabase;
   private readonly sqlitePath: string;
 
   constructor(sqlitePath: string) {
     this.sqlitePath = sqlitePath;
     mkdirSync(dirname(sqlitePath), { recursive: true });
-    this.database = new DatabaseSync(sqlitePath);
+    this.database = openSqliteDatabase(sqlitePath);
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS runs (
         run_id TEXT PRIMARY KEY,

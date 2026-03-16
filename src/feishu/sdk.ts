@@ -7,7 +7,6 @@ import type {
   BotWebSocketHealth,
   RunRecord,
   RunUpdateSink,
-  ServiceEventStateRecord,
   ServiceEventType,
   TaskDefinition,
   TaskResult,
@@ -659,7 +658,7 @@ export function createEventDispatcherHandlers(
 function loadSdkErrorHint(error: unknown): Error {
   const cause = error instanceof Error ? error.message : String(error);
   return new Error(
-    `Unable to load @larksuiteoapi/node-sdk. Run "npm install" before starting the service. Cause: ${cause}`,
+    `Unable to load @larksuiteoapi/node-sdk. Run "bun install" before starting the service. Cause: ${cause}`,
   );
 }
 

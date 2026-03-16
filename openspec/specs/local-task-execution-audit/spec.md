@@ -237,7 +237,7 @@ The system SHALL persist cronjob management state independently from one-shot ru
 - **AND** removing subscriptions does not by itself erase the persisted runtime state record
 
 ### Requirement: `kfc` is the controlled local execution and lifecycle interface
-The system SHALL provide a unified local CLI named `kfc` for service lifecycle, pairing, controlled direct task execution, local health inspection, full user-local uninstall, and controlled self-update.
+The system SHALL provide a unified local CLI named `kfc` for service lifecycle, pairing, controlled direct task execution, local health inspection, full user-local uninstall, release-based self-update, and single-step rollback to the previous locally installed version.
 
 #### Scenario: Local admin installs and starts the service with an explicit config path
 - **WHEN** a local administrator executes `kfc service install --config /path/to/bot.toml`
@@ -305,56 +305,115 @@ The system SHALL provide a unified local CLI named `kfc` for service lifecycle, 
 - **THEN** the system reports a clear operator-facing uninstall error or warning that identifies the affected plist or launchd label
 - **AND** it still attempts cleanup for the remaining discovered cronjob plists
 
-#### Scenario: Local admin performs a full uninstall through the CLI
+#### Scenario: Local admin performs a full uninstall through the CLI and preserves config by default
 - **WHEN** a local administrator executes `kfc uninstall`
 - **THEN** the system presents a destructive-action confirmation prompt before removing files
-- **AND** after confirmation it performs the same user-local removal covered by the host uninstall flow, including launchd state, installed app files, local launcher, default config file, and work directory
+- **AND** the prompt clearly states that the default config file will be preserved unless config deletion was explicitly requested
+- **AND** after confirmation it removes launchd state, installed app files, the local launcher, and the work directory
+- **AND** it preserves the default config file at `~/.config/kfc/config.toml`
+
+#### Scenario: Local admin opts in to deleting config during full uninstall
+- **WHEN** a local administrator executes `kfc uninstall --delete-config`
+- **THEN** the system presents a destructive-action confirmation prompt before removing files
+- **AND** the prompt clearly states that the default config file will also be removed
+- **AND** after confirmation it removes launchd state, installed app files, the local launcher, the work directory, and the default config file at `~/.config/kfc/config.toml`
 
 #### Scenario: Local admin declines full uninstall confirmation
 - **WHEN** a local administrator executes `kfc uninstall`
 - **AND** responds with anything other than `y` or `yes`
 - **THEN** the system aborts full uninstall without removing files or launchd state
 
-#### Scenario: Non-interactive full uninstall is explicitly requested
+#### Scenario: Non-interactive full uninstall preserves config by default
 - **WHEN** a local administrator executes `kfc uninstall --yes`
 - **THEN** the system skips the confirmation prompt
-- **AND** it performs the same full uninstall actions as the interactive confirmed path
+- **AND** it removes launchd state, installed app files, the local launcher, and the work directory
+- **AND** it preserves the default config file at `~/.config/kfc/config.toml`
 
-#### Scenario: Local admin runs `kfc update` and no newer version exists
+#### Scenario: Non-interactive full uninstall deletes config when explicitly requested
+- **WHEN** a local administrator executes `kfc uninstall --yes --delete-config`
+- **THEN** the system skips the confirmation prompt
+- **AND** it removes launchd state, installed app files, the local launcher, the work directory, and the default config file at `~/.config/kfc/config.toml`
+
+#### Scenario: Local admin runs `kfc update` and no newer stable release exists
 - **WHEN** a local administrator executes `kfc update`
-- **AND** the local service determines that the tracked git remote does not contain a newer version than the current local checkout
+- **AND** the local service determines that no newer supported GitHub Release is available
 - **THEN** the CLI reports that the service is already on the latest version
-- **AND** it does not pull code or rerun installation
+- **AND** it does not download or reinstall a release asset
 
-#### Scenario: Local admin confirms an available update
+#### Scenario: Local admin confirms an available release update
 - **WHEN** a local administrator executes `kfc update`
-- **AND** the local service detects that a newer version exists
+- **AND** the local service detects that a newer latest stable GitHub Release exists
 - **AND** the administrator confirms the update prompt
-- **THEN** the system pulls the latest code
-- **AND** it performs the installation step required to refresh the deployed service
+- **THEN** the system stages the new release under `app.new`
+- **AND** it verifies the embedded release metadata before activation
+- **AND** it refreshes the deployed service using `kfc service install` semantics
 - **AND** it reports that the update completed along with the current version information
 
 #### Scenario: Local admin skips confirmation explicitly
 - **WHEN** a local administrator executes `kfc update --yes`
-- **AND** the local service detects that a newer version exists
+- **AND** the local service detects that a newer latest stable GitHub Release exists
 - **THEN** the system skips the local confirmation prompt
-- **AND** it still performs the same repository safety checks and update workflow as interactive `kfc update`
+- **AND** it still performs the same metadata validation and release-update workflow as interactive `kfc update`
 
 #### Scenario: Local admin declines an available update
 - **WHEN** a local administrator executes `kfc update`
-- **AND** the local service detects that a newer version exists
+- **AND** the local service detects that a newer latest stable GitHub Release exists
 - **AND** the administrator answers anything other than `y` or `yes`
-- **THEN** the system aborts the update without modifying the working tree or reinstalling the service
+- **THEN** the system aborts the update without modifying the active app or reinstalling the service
 
-#### Scenario: Self-update is blocked by unsafe local repository state
-- **WHEN** `kfc update` is executed from a local checkout with uncommitted changes, missing remote tracking metadata, a local branch ahead of upstream, a diverged branch, or another unsupported repository state
+#### Scenario: Release update is blocked when install metadata is unusable
+- **WHEN** `kfc update` cannot read valid local install metadata for a release-based install
 - **THEN** the system returns a clear operator-facing error
-- **AND** it does not attempt to pull or reinstall
+- **AND** it does not attempt to download or activate a release asset
 
-#### Scenario: Update is only allowed when fast-forward is possible
-- **WHEN** `kfc update` compares local `HEAD` and the tracked upstream branch after fetch
-- **THEN** it proceeds only when the update can be applied as a fast-forward
-- **AND** it refuses to auto-update branches that would require merge, rebase, or destructive reset
+#### Scenario: Release update checks only the latest stable release
+- **WHEN** `kfc update` inspects remote release availability
+- **THEN** it uses only the latest stable GitHub Release for update comparison
+- **AND** it excludes draft and prerelease releases from update availability decisions
+
+#### Scenario: Old installs without release metadata are blocked from update and rollback
+- **WHEN** a locally installed app lacks usable `install-metadata.json`
+- **THEN** `kfc update` and `kfc rollback` are blocked
+- **AND** the operator-facing error directs the user to reinstall through the release-based installer to enable lifecycle management
+
+#### Scenario: Update failure after activation reports successful automatic rollback
+- **WHEN** `kfc update` has already activated a staged release
+- **AND** the subsequent service refresh fails
+- **AND** the system successfully restores the previous local install automatically
+- **THEN** the CLI reports that the update failed
+- **AND** it explicitly states that the service was rolled back to the restored previous version
+
+#### Scenario: Update failure after activation reports failed automatic rollback
+- **WHEN** `kfc update` has already activated a staged release
+- **AND** the subsequent service refresh fails
+- **AND** the system cannot restore the previous local install automatically
+- **THEN** the CLI reports that both update and automatic rollback failed
+- **AND** it explicitly states that manual recovery is required
+
+#### Scenario: Local admin runs `kfc rollback` when no previous version exists
+- **WHEN** a local administrator executes `kfc rollback`
+- **AND** no previous locally installed version is available
+- **THEN** the CLI returns a clear operator-facing error that no rollback version is available
+
+#### Scenario: Local admin confirms an available rollback
+- **WHEN** a local administrator executes `kfc rollback`
+- **AND** a previous locally installed version is available
+- **AND** the administrator confirms the rollback prompt
+- **THEN** the system swaps `app` and `app.previous`
+- **AND** it refreshes the deployed service using `kfc service install` semantics
+- **AND** it reports that the rollback completed along with the current version information
+
+#### Scenario: Local admin skips rollback confirmation explicitly
+- **WHEN** a local administrator executes `kfc rollback --yes`
+- **AND** a previous locally installed version is available
+- **THEN** the system skips the local confirmation prompt
+- **AND** it still performs the same rollback validation and service-refresh workflow as interactive `kfc rollback`
+
+#### Scenario: Rollback failure reports automatic restore status
+- **WHEN** `kfc rollback` has already started swapping `app` and `app.previous`
+- **AND** the subsequent validation or service refresh fails
+- **THEN** the CLI reports which rollback step failed
+- **AND** it states whether the service was automatically restored to the last known runnable version or whether manual recovery is required
 
 #### Scenario: Local admin stops the service
 - **WHEN** a local administrator executes `kfc service stop`
@@ -379,6 +438,15 @@ The system SHALL provide a unified local CLI named `kfc` for service lifecycle, 
 - **WHEN** a local administrator executes `kfc exec --bot BOT_ID --task TASK_ID`
 - **THEN** the system runs that configured task directly on the host without requiring Feishu confirmation
 - **AND** it rejects unknown tasks or bots
+
+#### Scenario: Host uninstall flow preserves config by default
+- **WHEN** an operator executes `uninstall.sh` without an explicit config-deletion opt-in
+- **THEN** the uninstall flow removes launchd state, installed app files, the local launcher, and the work directory
+- **AND** it preserves the default config file at `~/.config/kfc/config.toml`
+
+#### Scenario: Host uninstall flow deletes config only when explicitly requested
+- **WHEN** an operator executes `uninstall.sh` with `KFC_DELETE_CONFIG=true`
+- **THEN** the uninstall flow removes launchd state, installed app files, the local launcher, the work directory, and the default config file at `~/.config/kfc/config.toml`
 
 ### Requirement: Service startup and reload reconcile launchd-managed cronjobs
 The system SHALL reconcile configured cronjob tasks against `launchctl` state on startup and reload.
@@ -518,6 +586,58 @@ The system SHALL expose bot-scoped WebSocket connection health so operators can 
 - **WHEN** the process is intentionally stopping and closes a bot's WebSocket client as part of shutdown
 - **THEN** the system does not attempt to establish a replacement long connection for that stopping process
 
+### Requirement: The repository SHALL use Bun for dependency installation while keeping Node as the installed-service runtime
+The system SHALL treat Bun as the supported package manager for installing dependencies and SHALL also use Bun as the formal runtime for the installed launcher, managed main service, and launchd-managed cronjobs.
+
+#### Scenario: Host installation resolves dependencies and runtime through Bun
+- **WHEN** an operator installs the project through the supported host installer
+- **THEN** the installer uses Bun to install project dependencies into the extracted app directory
+- **AND** it prepares the installed launcher so it executes the app through Bun rather than Node
+
+#### Scenario: Managed service launchd plist uses Bun runtime
+- **WHEN** a local administrator executes `kfc service install`
+- **THEN** the generated `~/Library/LaunchAgents/com.kidsalfred.service.plist` invokes Bun directly for the service entrypoint
+- **AND** it does not require `node --experimental-strip-types`
+
+#### Scenario: Managed cronjob launchd plist uses Bun runtime
+- **WHEN** the system writes a launchd plist for a configured cronjob task
+- **THEN** the generated plist invokes Bun directly for the `kfc exec` entrypoint
+- **AND** it does not require `node --experimental-strip-types`
+
+#### Scenario: Release update refreshes the installed service under Bun runtime semantics
+- **WHEN** a release-based update completes successfully
+- **THEN** the refreshed installed launcher and managed service continue to be generated with Bun runtime program arguments
+
+#### Scenario: Release rollback refreshes the installed service under Bun runtime semantics
+- **WHEN** a release-based rollback completes successfully
+- **THEN** the restored installed launcher and managed service continue to be generated with Bun runtime program arguments
+
+### Requirement: Repository-local runtime SHALL support a Bun-compatible execution path
+The repository SHALL provide a Bun-compatible local execution path for service entrypoints without requiring the local runtime to import `node:sqlite` directly.
+
+#### Scenario: Local Bun start does not depend on `node:sqlite`
+- **WHEN** an operator runs the repository-local service entrypoint through Bun
+- **THEN** the service startup path uses a persistence implementation that is compatible with Bun
+- **AND** it does not fail solely because `node:sqlite` is unavailable in Bun
+
+#### Scenario: Node local execution remains supported during Bun compatibility migration
+- **WHEN** an operator runs the repository-local service entrypoint through Node
+- **THEN** the existing Node-compatible runtime path continues to function
+- **AND** the Bun compatibility work does not remove the stable Node execution path during migration
+
+### Requirement: Repository test execution SHALL support direct Bun test runner usage
+The repository SHALL support direct `bun test` as a first-class local test execution path for the supported test suite.
+
+#### Scenario: Direct Bun test passes for the supported suite
+- **WHEN** an operator runs `bun test` from the repository root
+- **THEN** the supported repository test suite executes successfully under Bun
+- **AND** the migration does not rely on delegating test execution back to Node's built-in runner
+
+#### Scenario: Bun test migration avoids brittle runtime-specific assertions
+- **WHEN** a test currently depends on Node-specific timing, ordering, or formatting side effects
+- **THEN** the migration rewrites the assertion to check the intended behavior instead
+- **AND** the resulting test remains deterministic under Bun
+
 #### Scenario: Reload closes old runtime but starts replacement connection
 - **WHEN** the system reloads configuration and intentionally closes the old runtime for an existing bot or a replaced bot definition
 - **THEN** it starts the newly active runtime's WebSocket client for that bot before considering event ingress restored
@@ -585,3 +705,27 @@ The system SHALL interpret bot WebSocket state transitions as service event trig
 #### Scenario: Reconnect threshold defaults to ten minutes
 - **WHEN** the operator does not configure `server.service_reconnect_notification_threshold_ms`
 - **THEN** the system uses a default reconnect notification threshold of `600000` milliseconds
+
+### Requirement: Bun is the only supported local runtime prerequisite
+The system SHALL treat Bun as the only supported runtime prerequisite for repository-local execution, installed lifecycle flows, sqlite-backed persistence, and test execution.
+
+#### Scenario: Repository-local wrapper executes through Bun
+- **WHEN** an operator invokes the repository-local `./kfc` wrapper
+- **THEN** the wrapper executes through Bun rather than Node
+- **AND** it does not require `node --experimental-strip-types`
+
+#### Scenario: Installation lifecycle does not require Node
+- **WHEN** an operator runs `install.sh`
+- **THEN** the script does not require a Node executable to parse release metadata or write install metadata
+- **AND** Bun remains sufficient for installation and later lifecycle flows
+
+#### Scenario: SQLite persistence uses only the Bun runtime backend
+- **WHEN** the service, CLI, or tests open the sqlite-backed run store
+- **THEN** the system uses the Bun sqlite backend
+- **AND** it does not retain a supported `node:sqlite` runtime branch
+
+#### Scenario: Bun is the only supported test runner
+- **WHEN** repository tests are executed through the supported path
+- **THEN** they run through Bun
+- **AND** the project does not claim Node test runner support
+

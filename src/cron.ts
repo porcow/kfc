@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { defaultConfigPath, resolveAppEntrypoint } from './config/paths.ts';
+import { defaultConfigPath, resolveAppEntrypoint, resolveBunExecutablePath } from './config/paths.ts';
 import type { BotConfig, CronJobRecord, CronObservedState, TaskDefinition } from './domain.ts';
 import { RunRepository } from './persistence/run-repository.ts';
 
@@ -291,13 +291,13 @@ export class LaunchdCronController implements CronController {
 
   private writePlist(task: TaskDefinition): string {
     const plistPath = this.plistPathFor(task.id);
+    const bunPath = resolveBunExecutablePath();
     writeFileSync(
       plistPath,
       buildLaunchdPlist({
         label: buildLaunchdLabel(this.config.botId, task.id),
         programArguments: [
-          process.execPath,
-          '--experimental-strip-types',
+          bunPath,
           this.kfcScriptPath,
           'exec',
           '--bot',
