@@ -16,7 +16,7 @@ Default local paths:
 - Each bot defaults its working directory to `~/.kfc/`
 - Each bot defaults its SQLite store to `~/.kfc/data/<botId>.sqlite`
 - Relative `sqlite_path` values are resolved against that bot working directory
-- `server.service_reconnect_notification_threshold_ms` controls the minimum outage window before `service_reconnected` is sent; the default is `600000` (`10` minutes)
+- `server.service_reconnect_notification_threshold_ms` controls the minimum successful-heartbeat gap before `service_reconnected` is sent; the default is `3600000` (`1` hour)
 
 ## Host Install
 
@@ -156,6 +156,9 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 ## WebSocket Operations
 
 - Each bot keeps its own Feishu long connection and exposes bot-scoped WebSocket health through `/health`.
+- `service_online` is emitted only once per bot runtime, when that bot first reaches `connected` after the main service process starts.
+- `service_reconnected` is emitted from the per-bot heartbeat evaluator, not directly from reconnect/disconnect state churn.
+- The heartbeat evaluator runs once per minute and only records success when the bot is currently `connected`.
 - Health output includes the bot's connection state, last successful connection time, next reconnect attempt when reconnecting, consecutive reconnect failures, and any warning about switching to the fallback webhook event endpoint.
 - Exceeding the reconnect-failure threshold does not automatically switch Feishu subscription mode. The warning is operator guidance only.
 - Process shutdown intentionally closes bot WebSocket clients and does not attempt replacement connections.

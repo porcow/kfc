@@ -216,7 +216,7 @@ function parseGlobalServer(input: unknown): GlobalServerConfig {
     port: expectNumber(server.port ?? 3000, 'server.port'),
     healthPath: expectString(server.health_path ?? '/health', 'server.health_path'),
     serviceReconnectNotificationThresholdMs: expectNumber(
-      server.service_reconnect_notification_threshold_ms ?? 600000,
+      server.service_reconnect_notification_threshold_ms ?? 3600000,
       'server.service_reconnect_notification_threshold_ms',
     ),
   };

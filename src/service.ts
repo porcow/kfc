@@ -209,7 +209,7 @@ export class KidsAlfredService {
     cronController?: CronController,
     repository?: RunRepository,
     builtinTools?: Map<string, TaskTool>,
-    serviceReconnectNotificationThresholdMs = 600000,
+    serviceReconnectNotificationThresholdMs = 3600000,
   ) {
     this.botId = config.botId;
     this.updates = new MultiRunUpdateSink(updates);
@@ -776,7 +776,7 @@ export class KidsAlfredService {
   saveServiceEventState(
     state: Partial<{
       lastConnectedAt: string | null;
-      lastDisconnectedAt: string | null;
+      lastHeartbeatSucceededAt: string | null;
       lastReconnectedNotifiedAt: string | null;
     }>,
     updatedAt?: string,

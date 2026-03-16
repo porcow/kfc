@@ -230,7 +230,7 @@ export interface ServiceEventSubscriptionRecord {
 
 export interface ServiceEventStateRecord {
   lastConnectedAt?: string;
-  lastDisconnectedAt?: string;
+  lastHeartbeatSucceededAt?: string;
   lastReconnectedNotifiedAt?: string;
   updatedAt: string;
 }

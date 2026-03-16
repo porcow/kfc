@@ -1,9 +1,9 @@
 [server]
 port = 3000
 health_path = "/health"
-# Minimum outage duration before sending service_reconnected notifications.
+# Minimum successful-heartbeat gap before sending service_reconnected notifications.
 # Unit: ms
-service_reconnect_notification_threshold_ms = 600000
+service_reconnect_notification_threshold_ms = 3600000
 
 [bots.ops]
 allowed_users = ["ou_ops_operator", "ou_ops_backup"]

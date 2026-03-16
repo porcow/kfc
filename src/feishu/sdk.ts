@@ -363,7 +363,7 @@ async function sendServiceEventNotification(
   service: ServiceEventAwareService,
   eventType: ServiceEventType,
   connectedAt: string,
-  options: { outageDurationMs?: number } = {},
+  options: { heartbeatGapMs?: number } = {},
 ): Promise<void> {
   const actorIds = service.listServiceEventSubscriberActorIds(eventType);
   if (actorIds.length === 0) {
@@ -375,7 +375,7 @@ async function sendServiceEventNotification(
     connectedAt,
     host: hostname(),
     loadedAt: service.getConfig().loadedAt,
-    outageDurationMs: options.outageDurationMs,
+    heartbeatGapMs: options.heartbeatGapMs,
   });
   for (const actorId of actorIds) {
     await sendInteractiveCard(
@@ -403,10 +403,6 @@ function isConnectedState(state: BotWebSocketHealth['state']): boolean {
   return state === 'connected';
 }
 
-function isOutageState(state: BotWebSocketHealth['state']): boolean {
-  return state === 'reconnecting' || state === 'disconnected';
-}
-
 export async function processServiceConnectionTransition(
   service: ServiceEventAwareService,
   client: ReplyClient,
@@ -416,16 +412,6 @@ export async function processServiceConnectionTransition(
   onlineNotificationSent: boolean,
 ): Promise<boolean> {
   if (previousHealth.state === nextHealth.state) {
-    return onlineNotificationSent;
-  }
-
-  const state = service.getServiceEventState();
-  if (isConnectedState(previousHealth.state) && isOutageState(nextHealth.state)) {
-    if (!state?.lastDisconnectedAt) {
-      service.saveServiceEventState({
-        lastDisconnectedAt: now,
-      }, now);
-    }
     return onlineNotificationSent;
   }
 
@@ -445,39 +431,49 @@ export async function processServiceConnectionTransition(
     nextOnlineNotificationSent = true;
     await sendServiceEventNotification(client, service, 'service_online', now);
   }
+  return nextOnlineNotificationSent;
+}
 
-  const outageStartedAt = state?.lastDisconnectedAt;
-  const shouldTreatAsPersistedOutage =
-    previousHealth.state === 'connecting' && Boolean(outageStartedAt);
-  if (!outageStartedAt || (!isOutageState(previousHealth.state) && !shouldTreatAsPersistedOutage)) {
-    service.saveServiceEventState({ lastDisconnectedAt: null }, now);
-    return nextOnlineNotificationSent;
+export async function processServiceHeartbeat(
+  service: ServiceEventAwareService,
+  client: ReplyClient,
+  now: string,
+  currentHealth: BotWebSocketHealth,
+): Promise<void> {
+  if (!isConnectedState(currentHealth.state)) {
+    return;
   }
 
-  const outageDurationMs = new Date(now).valueOf() - new Date(outageStartedAt).valueOf();
-  if (outageDurationMs >= service.getServiceReconnectNotificationThresholdMs()) {
-    await sendServiceEventNotification(client, service, 'service_reconnected', now, {
-      outageDurationMs,
-    });
-    service.saveServiceEventState(
-      {
-        lastDisconnectedAt: null,
-        lastConnectedAt: now,
-        lastReconnectedNotifiedAt: now,
-      },
-      now,
-    );
-    return nextOnlineNotificationSent;
-  }
-
+  const state = service.getServiceEventState();
+  const previousHeartbeatSucceededAt = state?.lastHeartbeatSucceededAt;
   service.saveServiceEventState(
     {
-      lastDisconnectedAt: null,
-      lastConnectedAt: now,
+      lastConnectedAt: currentHealth.lastConnectedAt ?? now,
+      lastHeartbeatSucceededAt: now,
     },
     now,
   );
-  return nextOnlineNotificationSent;
+
+  if (!previousHeartbeatSucceededAt) {
+    return;
+  }
+
+  const heartbeatGapMs = new Date(now).valueOf() - new Date(previousHeartbeatSucceededAt).valueOf();
+  if (heartbeatGapMs < service.getServiceReconnectNotificationThresholdMs()) {
+    return;
+  }
+
+  await sendServiceEventNotification(client, service, 'service_reconnected', now, {
+    heartbeatGapMs,
+  });
+  service.saveServiceEventState(
+    {
+      lastConnectedAt: currentHealth.lastConnectedAt ?? now,
+      lastHeartbeatSucceededAt: now,
+      lastReconnectedNotifiedAt: now,
+    },
+    now,
+  );
 }
 
 export class FeishuTaskResultSink implements TaskResultDeliverySink {
@@ -682,6 +678,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
   let wsClient: any;
   let manuallyClosed = false;
   let onlineNotificationSent = false;
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   let connectionEventQueue = Promise.resolve();
   const enqueueConnectionEvent = (operation: () => Promise<void>) => {
     connectionEventQueue = connectionEventQueue
@@ -713,6 +710,12 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
         now,
         onlineNotificationSent,
       );
+    });
+  };
+  const runHeartbeatCheck = () => {
+    const now = new Date().toISOString();
+    enqueueConnectionEvent(async () => {
+      await processServiceHeartbeat(service, client, now, { ...webSocketHealth });
     });
   };
   const wsLogger = {
@@ -828,12 +831,17 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
         logger: wsLogger,
       });
       await wsClient.start({ eventDispatcher });
+      heartbeatTimer = setInterval(runHeartbeatCheck, 60_000);
     },
     close: async () => {
       if (!wsClient) {
         return;
       }
       manuallyClosed = true;
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = undefined;
+      }
       webSocketHealth.state = 'disconnected';
       webSocketHealth.nextReconnectAt = undefined;
       if (typeof wsClient.stop === 'function') {

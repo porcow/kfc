@@ -13,6 +13,7 @@ import {
   extractCardActionPayload,
   FeishuRunUpdateSink,
   FeishuTaskResultSink,
+  processServiceHeartbeat,
   processServiceConnectionTransition,
 } from './feishu/sdk.ts';
 
@@ -639,7 +640,7 @@ test('service connection transition emits a session-scoped online notification t
       };
     },
     getServiceReconnectNotificationThresholdMs() {
-      return 600000;
+      return 3600000;
     },
     listServiceEventSubscriberActorIds(eventType: 'service_online' | 'service_reconnected') {
       return subscriptions[eventType];
@@ -711,7 +712,7 @@ test('service connection transition emits a session-scoped online notification t
   assert.ok(deliveries[0].data.content.includes('Bot 已上线'));
 });
 
-test('service connection transition uses a 10 minute default outage threshold for reconnect notifications', async () => {
+test('service heartbeat uses a 1 hour default threshold for reconnect notifications', async () => {
   const deliveries: any[] = [];
   const serviceState: any = {};
   const service = {
@@ -724,7 +725,7 @@ test('service connection transition uses a 10 minute default outage threshold fo
       };
     },
     getServiceReconnectNotificationThresholdMs() {
-      return 600000;
+      return 3600000;
     },
     listServiceEventSubscriberActorIds(eventType: 'service_online' | 'service_reconnected') {
       return eventType === 'service_reconnected' ? ['ou_a'] : [];
@@ -756,77 +757,57 @@ test('service connection transition uses a 10 minute default outage threshold fo
     },
   };
 
-  await processServiceConnectionTransition(
+  await processServiceHeartbeat(
     service as any,
     client as any,
+    '2026-03-15T01:00:00.000Z',
     {
       state: 'connected',
       consecutiveReconnectFailures: 0,
-    },
-    {
-      state: 'reconnecting',
-      consecutiveReconnectFailures: 1,
-    },
-    '2026-03-15T01:00:00.000Z',
-    true,
+    } as any,
   );
-  await processServiceConnectionTransition(
+  await processServiceHeartbeat(
     service as any,
     client as any,
-    {
-      state: 'reconnecting',
-      consecutiveReconnectFailures: 1,
-    },
+    '2026-03-15T01:06:00.000Z',
     {
       state: 'connected',
       consecutiveReconnectFailures: 0,
       lastConnectedAt: '2026-03-15T01:06:00.000Z',
-    },
-    '2026-03-15T01:06:00.000Z',
-    true,
+    } as any,
   );
   assert.equal(deliveries.length, 0);
 
-  await processServiceConnectionTransition(
+  await processServiceHeartbeat(
     service as any,
     client as any,
-    {
-      state: 'connected',
-      consecutiveReconnectFailures: 0,
-    },
-    {
-      state: 'reconnecting',
-      consecutiveReconnectFailures: 1,
-    },
     '2026-03-15T01:00:00.000Z',
-    true,
-  );
-  await processServiceConnectionTransition(
-    service as any,
-    client as any,
-    {
-      state: 'reconnecting',
-      consecutiveReconnectFailures: 1,
-    },
     {
       state: 'connected',
       consecutiveReconnectFailures: 0,
-      lastConnectedAt: '2026-03-15T01:10:00.000Z',
-    },
-    '2026-03-15T01:10:00.000Z',
-    true,
+    } as any,
+  );
+  await processServiceHeartbeat(
+    service as any,
+    client as any,
+    '2026-03-15T02:10:00.000Z',
+    {
+      state: 'connected',
+      consecutiveReconnectFailures: 0,
+      lastConnectedAt: '2026-03-15T02:10:00.000Z',
+    } as any,
   );
 
   assert.equal(deliveries.length, 1);
   assert.equal(deliveries[0].params.receive_id_type, 'open_id');
   assert.equal(deliveries[0].data.receive_id, 'ou_a');
   assert.ok(deliveries[0].data.content.includes('Bot 已恢复连接'));
-  assert.ok(deliveries[0].data.content.includes('10分'));
-  assert.equal(serviceState.lastDisconnectedAt, undefined);
-  assert.equal(serviceState.lastReconnectedNotifiedAt, '2026-03-15T01:10:00.000Z');
+  assert.ok(deliveries[0].data.content.includes('1小时10分'));
+  assert.equal(serviceState.lastHeartbeatSucceededAt, '2026-03-15T02:10:00.000Z');
+  assert.equal(serviceState.lastReconnectedNotifiedAt, '2026-03-15T02:10:00.000Z');
 });
 
-test('service connection transition respects explicit global reconnect threshold overrides', async () => {
+test('service heartbeat respects explicit global reconnect threshold overrides', async () => {
   const deliveries: any[] = [];
   const serviceState: any = {};
   const service = {
@@ -871,46 +852,33 @@ test('service connection transition respects explicit global reconnect threshold
     },
   };
 
-  await processServiceConnectionTransition(
+  await processServiceHeartbeat(
     service as any,
     client as any,
+    '2026-03-15T01:00:00.000Z',
     {
       state: 'connected',
       consecutiveReconnectFailures: 0,
-    },
-    {
-      state: 'reconnecting',
-      consecutiveReconnectFailures: 1,
-    },
-    '2026-03-15T01:00:00.000Z',
-    true,
+    } as any,
   );
-  await processServiceConnectionTransition(
+  await processServiceHeartbeat(
     service as any,
     client as any,
-    {
-      state: 'reconnecting',
-      consecutiveReconnectFailures: 1,
-    },
+    '2026-03-15T01:02:00.000Z',
     {
       state: 'connected',
       consecutiveReconnectFailures: 0,
       lastConnectedAt: '2026-03-15T01:02:00.000Z',
-    },
-    '2026-03-15T01:02:00.000Z',
-    true,
+    } as any,
   );
 
   assert.equal(deliveries.length, 1);
   assert.ok(deliveries[0].data.content.includes('2分'));
 });
 
-test('service connection transition preserves a persisted outage across process restart', async () => {
+test('service heartbeat skips persistence and notifications while the bot is not connected', async () => {
   const deliveries: any[] = [];
-  const serviceState: any = {
-    lastDisconnectedAt: '2026-03-15T01:00:00.000Z',
-    updatedAt: '2026-03-15T01:00:00.000Z',
-  };
+  const serviceState: any = {};
   const service = {
     getBotId() {
       return 'alpha';
@@ -953,26 +921,16 @@ test('service connection transition preserves a persisted outage across process 
     },
   };
 
-  await processServiceConnectionTransition(
+  await processServiceHeartbeat(
     service as any,
     client as any,
-    {
-      state: 'connecting',
-      consecutiveReconnectFailures: 0,
-    },
-    {
-      state: 'connected',
-      consecutiveReconnectFailures: 0,
-      lastConnectedAt: '2026-03-15T01:06:00.000Z',
-    },
     '2026-03-15T01:06:00.000Z',
-    true,
+    {
+      state: 'reconnecting',
+      consecutiveReconnectFailures: 0,
+    } as any,
   );
 
-  assert.equal(deliveries.length, 1);
-  assert.equal(deliveries[0].params.receive_id_type, 'open_id');
-  assert.equal(deliveries[0].data.receive_id, 'ou_a');
-  assert.ok(deliveries[0].data.content.includes('Bot 已恢复连接'));
-  assert.equal(serviceState.lastDisconnectedAt, undefined);
-  assert.equal(serviceState.lastReconnectedNotifiedAt, '2026-03-15T01:06:00.000Z');
+  assert.equal(deliveries.length, 0);
+  assert.deepEqual(serviceState, {});
 });

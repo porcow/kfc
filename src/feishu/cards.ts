@@ -329,7 +329,7 @@ export function buildServiceEventNotificationCard(options: {
   connectedAt: string;
   host: string;
   loadedAt?: string;
-  outageDurationMs?: number;
+  heartbeatGapMs?: number;
 }): Record<string, unknown> {
   if (options.eventType === 'service_online') {
     const lines = [
@@ -343,7 +343,7 @@ export function buildServiceEventNotificationCard(options: {
     return baseCard('Bot 已上线', [buildMarkdown(lines.join('\n'))]);
   }
 
-  const outageDuration = formatShortDuration(options.outageDurationMs ?? 0);
+  const heartbeatGap = formatShortDuration(options.heartbeatGapMs ?? 0);
   return baseCard(
     'Bot 已恢复连接',
     [
@@ -351,7 +351,7 @@ export function buildServiceEventNotificationCard(options: {
         [
           `Bot: **${options.botId}**`,
           `Reconnected at: \`${formatFeishuTimestamp(options.connectedAt)}\``,
-          `Outage duration: **${outageDuration}**`,
+          `Heartbeat gap: **${heartbeatGap}**`,
           `Host: \`${options.host}\``,
         ].join('\n'),
       ),

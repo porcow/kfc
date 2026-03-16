@@ -94,7 +94,7 @@ export class RunRepository {
       CREATE TABLE IF NOT EXISTS service_event_state (
         singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
         last_connected_at TEXT,
-        last_disconnected_at TEXT,
+        last_heartbeat_succeeded_at TEXT,
         last_reconnected_notified_at TEXT,
         updated_at TEXT NOT NULL
       );
@@ -585,7 +585,7 @@ export class RunRepository {
   saveServiceEventState(
     state: Partial<{
       lastConnectedAt: string | null;
-      lastDisconnectedAt: string | null;
+      lastHeartbeatSucceededAt: string | null;
       lastReconnectedNotifiedAt: string | null;
     }>,
     updatedAt = new Date().toISOString(),
@@ -594,10 +594,10 @@ export class RunRepository {
     const next: ServiceEventStateRecord = {
       lastConnectedAt:
         state.lastConnectedAt !== undefined ? state.lastConnectedAt ?? undefined : current?.lastConnectedAt,
-      lastDisconnectedAt:
-        state.lastDisconnectedAt !== undefined
-          ? state.lastDisconnectedAt ?? undefined
-          : current?.lastDisconnectedAt,
+      lastHeartbeatSucceededAt:
+        state.lastHeartbeatSucceededAt !== undefined
+          ? state.lastHeartbeatSucceededAt ?? undefined
+          : current?.lastHeartbeatSucceededAt,
       lastReconnectedNotifiedAt:
         state.lastReconnectedNotifiedAt !== undefined
           ? state.lastReconnectedNotifiedAt ?? undefined
@@ -607,17 +607,17 @@ export class RunRepository {
     this.database
       .prepare(`
         INSERT INTO service_event_state (
-          singleton_id, last_connected_at, last_disconnected_at, last_reconnected_notified_at, updated_at
+          singleton_id, last_connected_at, last_heartbeat_succeeded_at, last_reconnected_notified_at, updated_at
         ) VALUES (1, ?, ?, ?, ?)
         ON CONFLICT(singleton_id) DO UPDATE SET
           last_connected_at = excluded.last_connected_at,
-          last_disconnected_at = excluded.last_disconnected_at,
+          last_heartbeat_succeeded_at = excluded.last_heartbeat_succeeded_at,
           last_reconnected_notified_at = excluded.last_reconnected_notified_at,
           updated_at = excluded.updated_at
       `)
       .run(
         next.lastConnectedAt ?? null,
-        next.lastDisconnectedAt ?? null,
+        next.lastHeartbeatSucceededAt ?? null,
         next.lastReconnectedNotifiedAt ?? null,
         next.updatedAt,
       );
@@ -739,7 +739,9 @@ export class RunRepository {
   private toServiceEventStateRecord(row: Record<string, unknown>): ServiceEventStateRecord {
     return {
       lastConnectedAt: row.last_connected_at ? String(row.last_connected_at) : undefined,
-      lastDisconnectedAt: row.last_disconnected_at ? String(row.last_disconnected_at) : undefined,
+      lastHeartbeatSucceededAt: row.last_heartbeat_succeeded_at
+        ? String(row.last_heartbeat_succeeded_at)
+        : undefined,
       lastReconnectedNotifiedAt: row.last_reconnected_notified_at
         ? String(row.last_reconnected_notified_at)
         : undefined,

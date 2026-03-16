@@ -90,7 +90,7 @@ test('loadConfig parses multiple bots from TOML', async () => {
   const config = await loadConfig(configPath);
 
   assert.equal(config.server.port, 3100);
-  assert.equal(config.server.serviceReconnectNotificationThresholdMs, 600000);
+  assert.equal(config.server.serviceReconnectNotificationThresholdMs, 3600000);
   assert.deepEqual(Object.keys(config.bots).sort(), ['alpha', 'beta']);
   assert.equal(config.bots.alpha.allowedUsers[0], 'user-1');
   assert.equal(config.bots.alpha.tasks.echo.runnerKind, 'builtin-tool');
