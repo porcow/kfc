@@ -1,5 +1,6 @@
 import type {
   AppHealthSnapshot,
+  BotWebhookHealth,
   BotConfig,
   CardResponse,
   EventLogEntry,
@@ -9,6 +10,7 @@ import type {
   RunRecord,
   ServiceEventStateRecord,
   ServiceEventType,
+  IngressMode,
   TaskResult,
   TaskResultDeliverySink,
   RunUpdateSink,
@@ -200,6 +202,8 @@ export class KidsAlfredService {
   private readonly cronController: CronController;
   private healthSnapshotProvider?: () => AppHealthSnapshot;
   private readonly serviceReconnectNotificationThresholdMs: number;
+  private readonly ingressMode: IngressMode;
+  private webhookObservation?: { lastEventReceivedAt: string; lastEventType: string };
 
   constructor(
     config: BotConfig,
@@ -210,6 +214,7 @@ export class KidsAlfredService {
     repository?: RunRepository,
     builtinTools?: Map<string, TaskTool>,
     serviceReconnectNotificationThresholdMs = 3600000,
+    ingressMode: IngressMode = 'websocket-only',
   ) {
     this.botId = config.botId;
     this.updates = new MultiRunUpdateSink(updates);
@@ -227,6 +232,7 @@ export class KidsAlfredService {
     this.cronController =
       cronController ?? new MemoryCronController(config.botId, config.tasks, this.repository);
     this.serviceReconnectNotificationThresholdMs = serviceReconnectNotificationThresholdMs;
+    this.ingressMode = ingressMode;
     this.repository.reconcileInterruptedRuns();
   }
 
@@ -242,8 +248,33 @@ export class KidsAlfredService {
     return this.serviceReconnectNotificationThresholdMs;
   }
 
+  getIngressMode(): IngressMode {
+    return this.ingressMode;
+  }
+
   setHealthSnapshotProvider(provider: () => AppHealthSnapshot): void {
     this.healthSnapshotProvider = provider;
+  }
+
+  getWebhookHealth(now: string = new Date().toISOString()): BotWebhookHealth {
+    const lastEventReceivedAt = this.webhookObservation?.lastEventReceivedAt;
+    const stale =
+      !lastEventReceivedAt ||
+      new Date(now).valueOf() - new Date(lastEventReceivedAt).valueOf() > 5 * 60_000;
+    return {
+      enabled: this.ingressMode === 'websocket-with-webhook-fallback',
+      configured: Boolean(this.config.server.eventPath),
+      lastEventReceivedAt,
+      lastEventType: this.webhookObservation?.lastEventType,
+      stale,
+    };
+  }
+
+  observeWebhookEvent(eventType: string, now: string = new Date().toISOString()): void {
+    this.webhookObservation = {
+      lastEventReceivedAt: now,
+      lastEventType: eventType,
+    };
   }
 
   claimIngressEvent(eventKey: string, eventType: string): boolean {
@@ -321,7 +352,7 @@ export class KidsAlfredService {
 
   private buildUnsupportedCommandMessage(): string {
     const runExample = this.hasScreencaptureTask() ? ' (for example `/run sc`)' : '';
-    return `Unsupported command. Use /help, /health, /tasks, /run TASK_ID key=value ...${runExample}, /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.`;
+    return `Unsupported command. Use /help, /server health, /tasks, /run TASK_ID key=value ...${runExample}, /server update, /server rollback, /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.`;
   }
 
   async listCronTasks(
@@ -503,7 +534,7 @@ export class KidsAlfredService {
         });
         return response;
       }
-      if (trimmed === '/health') {
+      if (trimmed === '/server health') {
         const response = this.getHealth(actorId);
         await this.logEvent({
           actorId,
@@ -511,6 +542,34 @@ export class KidsAlfredService {
           eventType: 'im.message.receive_v1',
           commandType: 'health',
           decision: 'status_returned',
+        });
+        return response;
+      }
+      if (trimmed === '/server update') {
+        const response = this.submitProtectedTaskRequest(actorId, 'update', context);
+        const confirmationId = this.findPendingConfirmationId(actorId, 'update', context.chatId);
+        await this.logEvent({
+          actorId,
+          chatId: context.chatId,
+          eventType: 'im.message.receive_v1',
+          commandType: 'server_update',
+          decision: 'confirmation_created',
+          taskId: 'update',
+          confirmationId,
+        });
+        return response;
+      }
+      if (trimmed === '/server rollback') {
+        const response = this.submitProtectedTaskRequest(actorId, 'rollback', context);
+        const confirmationId = this.findPendingConfirmationId(actorId, 'rollback', context.chatId);
+        await this.logEvent({
+          actorId,
+          chatId: context.chatId,
+          eventType: 'im.message.receive_v1',
+          commandType: 'server_rollback',
+          decision: 'confirmation_created',
+          taskId: 'rollback',
+          confirmationId,
         });
         return response;
       }
@@ -545,6 +604,9 @@ export class KidsAlfredService {
       }
       if (trimmed.startsWith('/run ')) {
         const { taskId, parameters } = parseRunCommand(trimmed.replace('/run ', '').trim());
+        if (taskId === 'update' || taskId === 'rollback') {
+          throw new Error(this.buildUnsupportedCommandMessage());
+        }
         const response = this.submitTaskRequest(actorId, taskId, parameters, context);
         const confirmationId = this.findPendingConfirmationId(actorId, taskId, context.chatId);
         await this.logEvent({
@@ -858,8 +920,14 @@ export class KidsAlfredService {
     if (text === '/help') {
       return 'help';
     }
-    if (text === '/health') {
+    if (text === '/server health') {
       return 'health';
+    }
+    if (text === '/server update') {
+      return 'server_update';
+    }
+    if (text === '/server rollback') {
+      return 'server_rollback';
     }
     if (text === '/tasks') {
       return 'tasks';
@@ -901,6 +969,19 @@ export class KidsAlfredService {
       (entry) =>
         entry.actorId === actorId && entry.taskId === taskId && entry.originChatId === chatId,
     )?.id;
+  }
+
+  private submitProtectedTaskRequest(
+    actorId: string,
+    taskId: 'update' | 'rollback',
+    context: { chatId?: string } = {},
+  ): CardResponse {
+    this.ensureAuthorized(actorId);
+    const task = this.getTask(taskId);
+    if (task.executionMode !== 'oneshot') {
+      throw new Error(`Task mode mismatch: ${taskId} must be managed through /run`);
+    }
+    return this.submitTaskRequest(actorId, taskId, {}, context);
   }
 
   private resolveCardActionActorId(

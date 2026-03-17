@@ -1,6 +1,45 @@
 ## Purpose
 Define the local execution, persistence, audit, lifecycle, and service-management behavior that must remain durable and operator-auditable across runs and restarts.
 ## Requirements
+### Requirement: Bot WebSocket health and effective ingress availability are observable
+The system SHALL expose bot-scoped ingress health so operators can distinguish process availability, primary WebSocket transport health, webhook fallback observations, and effective bot serviceability.
+
+#### Scenario: Health endpoint reports strict WebSocket readiness
+- **WHEN** the service ingress mode is `websocket-only`
+- **THEN** the health or diagnostic surface reports a bot as ready only when its WebSocket transport is connected
+- **AND** webhook observations do not make that bot ready under this mode
+
+#### Scenario: Health endpoint reports degraded-but-available fallback state
+- **WHEN** the service ingress mode is `websocket-with-webhook-fallback`
+- **AND** a bot's WebSocket transport is reconnecting or disconnected
+- **AND** recent webhook events have been observed for that bot inside the fallback recency window
+- **THEN** the health or diagnostic surface reports that bot as available
+- **AND** it marks the bot as degraded
+- **AND** it identifies webhook as the active ingress transport for that bot
+
+#### Scenario: Health endpoint reports unavailable bot when both ingress signals are absent
+- **WHEN** the service ingress mode is `websocket-with-webhook-fallback`
+- **AND** a bot's WebSocket transport is not connected
+- **AND** no recent webhook events have been observed for that bot inside the fallback recency window
+- **THEN** the health or diagnostic surface reports that bot as unavailable
+- **AND** it does not treat stale webhook history as proof of current serviceability
+
+#### Scenario: Health is available through HTTP, CLI, and Feishu command surfaces
+- **WHEN** the running service publishes health data
+- **THEN** HTTP `/health`, `kfc health`, and the authorized Feishu `/server health` command all expose the same canonical ingress mode and per-bot availability facts
+- **AND** HTTP and CLI expose the full canonical JSON model
+- **AND** Feishu exposes a summarized view derived from that same canonical model rather than a separate health implementation
+
+#### Scenario: Reconnect notifications use the same effective availability standard as health
+- **WHEN** the service evaluates whether a bot has recovered after a prolonged absence of successful ingress checks
+- **THEN** it uses the same ingress-mode-aware `ingressAvailable` predicate that drives health readiness and bot availability
+- **AND** it does not maintain a second reconnect-only health definition that can disagree with the canonical health model
+
+#### Scenario: Webhook fallback observations remain visible for diagnostics
+- **WHEN** the service observes webhook-delivered Feishu events for a bot
+- **THEN** it records the latest webhook event timestamp and type for that bot
+- **AND** the canonical health output exposes those observations so operators can correlate fallback activity with transport degradation
+
 ### Requirement: The `sc` oneshot task captures the current screen and returns it through Feishu
 The system SHALL support a configured oneshot task `sc`, backed by the builtin-tool `screencapture`, that captures the current macOS screen, stores the image temporarily on disk, sends it back through the Feishu SDK to the originating chat, and removes the temporary file after successful delivery.
 
@@ -194,8 +233,8 @@ The system SHALL persist each run with the initiating user, task identifier, par
 - **THEN** the persisted run record remains the source of truth
 - **AND** a later `/run-status <run_id>` request returns the same canonical state and summary
 
-#### Scenario: Authorized `/run update` executes the shared self-update workflow
-- **WHEN** an authorized Feishu user confirms `/run update`
+#### Scenario: Authorized `/server update` executes the shared self-update workflow
+- **WHEN** an authorized Feishu user confirms `/server update`
 - **THEN** the system executes the same update check, confirmation outcome, pull, and install workflow used by `kfc update`
 - **AND** the persisted run summary includes whether the service was already current or was updated successfully
 
@@ -243,6 +282,7 @@ The system SHALL provide a unified local CLI named `kfc` for service lifecycle, 
 - **WHEN** a local administrator executes `kfc service install --config /path/to/bot.toml`
 - **THEN** the system writes or refreshes the main-service plist at `~/Library/LaunchAgents/com.kidsalfred.service.plist`
 - **AND** it installs launchd management for the main service under the stable label `com.kidsalfred.service`
+- **AND** it removes cron launchd jobs deleted from the previously installed config before starting the refreshed main service
 - **AND** it starts the main service immediately
 - **AND** installation triggers configuration validation and cronjob reconciliation
 
@@ -251,6 +291,7 @@ The system SHALL provide a unified local CLI named `kfc` for service lifecycle, 
 - **THEN** the system resolves the service config path to `~/.config/kfc/config.toml`
 - **AND** it writes or refreshes the main-service plist at `~/Library/LaunchAgents/com.kidsalfred.service.plist`
 - **AND** it installs launchd management for the main service under the stable label `com.kidsalfred.service`
+- **AND** it removes cron launchd jobs deleted from the previously installed config before starting the refreshed main service
 - **AND** it starts the main service immediately
 - **AND** installation triggers configuration validation and cronjob reconciliation
 
@@ -418,6 +459,7 @@ The system SHALL provide a unified local CLI named `kfc` for service lifecycle, 
 #### Scenario: Local admin stops the service
 - **WHEN** a local administrator executes `kfc service stop`
 - **THEN** the system stops the main service process without rewriting configured cronjob policy
+- **AND** it does not delete the main service plist, unload configured cron launchd jobs, or remove cron plist files
 
 #### Scenario: Start, restart, or stop on an uninstalled service returns a clear error
 - **WHEN** a local administrator executes `kfc service start`, `kfc service restart`, or `kfc service stop` before the main-service plist has been installed
@@ -450,6 +492,21 @@ The system SHALL provide a unified local CLI named `kfc` for service lifecycle, 
 
 ### Requirement: Service startup and reload reconcile launchd-managed cronjobs
 The system SHALL reconcile configured cronjob tasks against `launchctl` state on startup and reload.
+
+#### Scenario: Service install removes cron jobs deleted from config
+- **WHEN** a local administrator executes `kfc service install` for a config that no longer declares one or more cron tasks present under the previously installed service config
+- **THEN** the system unloads those deleted cron launchd jobs and removes their cron plist files before starting the refreshed main service
+- **AND** it keeps cron jobs that are still declared available for the normal post-start reconcile flow
+
+#### Scenario: Release update refresh cleans deleted cron jobs
+- **WHEN** `kfc update` completes activation of a new release
+- **THEN** the service refresh step removes cron launchd jobs deleted from the active config in addition to refreshing the main service plist
+- **AND** the host launchd state after the refresh matches the currently active config rather than retaining deleted cron jobs
+
+#### Scenario: Release rollback refresh cleans deleted cron jobs
+- **WHEN** `kfc rollback` completes activation of the rollback target
+- **THEN** the service refresh step removes cron launchd jobs deleted from the active config in addition to refreshing the main service plist
+- **AND** the host launchd state after the refresh matches the currently active config rather than retaining deleted cron jobs
 
 #### Scenario: Cron expression is translated into launchd schedule data
 - **WHEN** the system activates a valid cronjob task from TOML
@@ -757,4 +814,3 @@ The project SHALL provide a repeatable release packaging workflow that produces 
 - **THEN** it verifies the asset contains `.kfc-release.json`
 - **AND** it verifies required runtime entrypoints such as `src/index.ts`, `src/kfc.ts`, and `package.json`
 - **AND** it verifies the embedded `asset_name` matches the tarball filename
-

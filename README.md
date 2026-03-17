@@ -43,7 +43,7 @@ Tagged releases are packaged by GitHub Actions rather than ad hoc archive downlo
 - Push a version tag such as `v0.2.0`.
 - The workflow at [release-package.yml](/Users/porco/Projects/KidsAlfred/.github/workflows/release-package.yml) stages the runtime app root, generates `.kfc-release.json`, and produces the canonical asset `kfc-vX.Y.Z.tar.gz`.
 - The workflow uploads both the tarball and a companion manifest JSON to the matching GitHub Release.
-- `install.sh` and the release-based `kfc update` / `/run update` flows consume that workflow-produced GitHub Release tarball.
+- `install.sh` and the release-based `kfc update` / `/server update` flows consume that workflow-produced GitHub Release tarball.
 
 The packaged tarball embeds `.kfc-release.json` with:
 - `repo`
@@ -110,17 +110,17 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 - Task definitions are loaded from TOML under `[bots.<id>]` using `runner_kind = "builtin-tool" | "external-command"` plus `execution_mode = "oneshot" | "cronjob"`, and only activate after startup or explicit reload.
 - Run history is stored in a separate SQLite file per bot via Bun's built-in sqlite support.
 - Cronjob desired and observed state is stored separately from one-shot run history and reconciled against `launchd` on startup and reload.
-- `/health` now reports both process liveness and per-bot WebSocket readiness. Use it to distinguish “process is up” from “bot is actually receiving Feishu events”.
+- `/health` now reports process liveness, ingress mode, per-bot transport health, and effective bot availability. Use it to distinguish “process is up”, “WebSocket is healthy”, and “the bot is still serviceable through fallback ingress”.
 
 
 ## Feishu Interaction Flow
 
 - Send `/help` to get a concise command reference for the bot text interface.
-- Send `/health` to get an informational health summary for the running service, active bots, and per-bot WebSocket state.
+- Send `/server health` to get an informational health summary for the running service, active bots, ingress mode, and per-bot ingress availability.
 - Send `/tasks` to get an informational catalog of one-shot tasks for the current bot.
 - Bots only expose `/run sc` when they explicitly configure task `sc`; when enabled, it captures the current screen and returns the image to the same chat after confirmation.
-- Bots only expose `/run update` when they explicitly configure task `update`; when enabled, it checks the latest stable GitHub Release, stages the new release, refreshes the managed service, and reports either `already latest`, `update completed`, or explicit recovery errors.
-- Bots only expose `/run rollback` when they explicitly configure task `rollback`; when enabled, it swaps to the previous locally installed version after confirmation and refreshes the managed service.
+- Bots only expose `/server update` when they explicitly configure task `update`; when enabled, it checks the latest stable GitHub Release, stages the new release, refreshes the managed service, and reports either `already latest`, `update completed`, or explicit recovery errors.
+- Bots only expose `/server rollback` when they explicitly configure task `rollback`; when enabled, it swaps to the previous locally installed version after confirmation and refreshes the managed service.
 - If your Feishu user is not yet authorized, the bot returns a one-time pairing card with a local admin command in the form `kfc pair BOT_ID-RAND6`.
 - Each task card includes an example `/run TASK_ID key=value ...` command.
 - Send `/run TASK_ID key=value ...` to validate parameters and get an explicit confirmation card for one-shot tasks.
@@ -140,7 +140,7 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 - `./kfc update --yes` performs the same release-based update workflow non-interactively once install metadata and the latest stable release are usable.
 - `./kfc rollback` checks whether `app.previous` and matching install metadata are available, prompts before swapping the local app directories, and refreshes the managed service.
 - `./kfc rollback --yes` performs the same rollback workflow non-interactively.
-- `./kfc service install` writes or refreshes `~/Library/LaunchAgents/com.kidsalfred.service.plist`, installs launchd management, and starts the main service immediately using `~/.config/kfc/config.toml`.
+- `./kfc service install` writes or refreshes `~/Library/LaunchAgents/com.kidsalfred.service.plist`, removes cron launchd jobs deleted from the previously installed config, and starts the main service immediately using `~/.config/kfc/config.toml`.
 - `./kfc service install --config /path/to/bot.toml` does the same using an explicit override path.
 - `./kfc service uninstall` stops the managed service if needed, unloads all configured bot-scoped cronjobs from launchd, removes their cron plist files, and then removes `~/Library/LaunchAgents/com.kidsalfred.service.plist`.
 - `./kfc uninstall` performs a full user-local uninstall after interactive confirmation, removing launchd state, the installed app tree, launcher, and `~/.kfc` while preserving the default config.
@@ -148,18 +148,21 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 - `./kfc uninstall --delete-config` or `./kfc uninstall --yes --delete-config` also removes `~/.config/kfc/config.toml`.
 - `./kfc service start` starts an already-installed service.
 - `./kfc service restart` restarts an already-installed service without changing cronjob policy.
-- `./kfc service stop` stops an already-installed service without uninstalling it. Cronjobs still follow their configured `auto_start` policy the next time the service reconciles.
+- `./kfc service stop` stops an already-installed service without uninstalling it. It does not remove the main-service plist or cron launchd plists, and cronjobs still follow their configured `auto_start` policy the next time the service reconciles.
 - `./kfc pair BOT_ID-RAND6` resolves a pending pairing request, updates `allowed_users`, and triggers immediate reload.
 - `./kfc exec --bot BOT_ID --task TASK_ID` executes a configured task directly on the host using its config-defined parameters. This is also the command launchd uses for cronjobs.
 - If the service is not installed, `./kfc service start`, `./kfc service restart`, and `./kfc service stop` return a clear operator-facing error instead of silently succeeding.
 
 ## WebSocket Operations
 
-- Each bot keeps its own Feishu long connection and exposes bot-scoped WebSocket health through `/health`.
+- Each bot keeps its own Feishu long connection and exposes bot-scoped WebSocket and webhook-fallback observations through `/server health`.
+- `server.ingress_mode` controls whether health and reconnect evaluation use strict WebSocket-only serviceability (`websocket-only`, the default) or allow degraded webhook fallback serviceability (`websocket-with-webhook-fallback`).
 - `service_online` is emitted only once per bot runtime, when that bot first reaches `connected` after the main service process starts.
 - `service_reconnected` is emitted from the per-bot heartbeat evaluator, not directly from reconnect/disconnect state churn.
-- The heartbeat evaluator runs once per minute and only records success when the bot is currently `connected`.
-- Health output includes the bot's connection state, last successful connection time, next reconnect attempt when reconnecting, consecutive reconnect failures, and any warning about switching to the fallback webhook event endpoint.
+- The heartbeat evaluator runs once per minute and uses the same ingress-mode-aware availability predicate exposed by `/server health`.
+- In `websocket-only` mode, a successful availability check requires a connected WebSocket transport.
+- In `websocket-with-webhook-fallback` mode, a successful availability check may come from either WebSocket connectivity or recent webhook-delivered ingress activity for that bot.
+- Health output includes the bot's WebSocket state, fallback observations, active ingress transport, degraded state, and effective availability under the configured ingress mode.
 - Exceeding the reconnect-failure threshold does not automatically switch Feishu subscription mode. The warning is operator guidance only.
 - Process shutdown intentionally closes bot WebSocket clients and does not attempt replacement connections.
 - Configuration reload intentionally retires old bot runtimes and explicitly starts replacement WebSocket clients for the new active bot set.
@@ -183,8 +186,8 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 - `Summary` is a concise operator-facing excerpt derived from the persisted run record, not a raw stdout or stderr dump.
 - Feishu summaries are truncated to 300 characters with an ellipsis when necessary.
 - `/run sc` writes a temporary screenshot file under `~/.kfc/data/screenshot-YYYYMMDD-HHmmss.png`, uploads it back to the originating chat, and removes the file only after successful delivery.
-- `/run update` reuses the same release-based inspection and execution workflow as `kfc update`; it reports `already latest`, `update completed`, `update failed and rolled back`, or explicit blocking/recovery errors in the run summary.
-- `/run rollback` reuses the same local rollback workflow as `kfc rollback`; it reports `rollback completed`, `no rollback version is available`, or explicit restoration errors in the run summary.
+- `/server update` reuses the same release-based inspection and execution workflow as `kfc update`; it reports `already latest`, `update completed`, `update failed and rolled back`, or explicit blocking/recovery errors in the run summary.
+- `/server rollback` reuses the same local rollback workflow as `kfc rollback`; it reports `rollback completed`, `no rollback version is available`, or explicit restoration errors in the run summary.
 - If an asynchronous push update fails, the run state remains persisted locally and can still be recovered with `/run-status RUN_ID`.
 
 ## Event Logging

@@ -6,13 +6,13 @@ Core application code lives in `src/`. Key areas include `src/config/` for TOML 
 
 ## Build, Test, and Development Commands
 
-- `npm run dev`: starts the service in watch mode with `node --watch-path=src`.
-- `npm start`: runs the TypeScript entrypoint once via Node's strip-types support.
-- `npm test`: runs the built-in Node test runner against `src/*.test.ts` and `src/**/*.test.ts`.
+- `bun run dev`: starts the service in watch mode through Bun.
+- `bun run start`: runs the TypeScript entrypoint once through Bun.
+- `bun test`: runs the Bun test suite against `src/*.test.ts` and `src/**/*.test.ts`.
 - `./kfc health`: queries the local service health endpoint.
 - `./kfc service install --config /path/to/bot.toml`: installs and starts the managed macOS `launchd` service.
 
-Use `KIDS_ALFRED_CONFIG=/path/to/bot.toml npm run dev` for local bot development against a non-default config.
+Use `KIDS_ALFRED_CONFIG=/path/to/bot.toml bun run dev` for local bot development against a non-default config.
 
 ## Coding Style & Naming Conventions
 
@@ -20,7 +20,7 @@ Follow the existing TypeScript ESM style: explicit `.ts` import suffixes, single
 
 ## Testing Guidelines
 
-Tests use the Node built-in runner with `node --test`; no separate test framework is configured. Add or update focused unit tests whenever behavior changes, especially for config parsing, CLI flows, cron handling, and Feishu message paths. Prefer small deterministic tests in `src/**/*.test.ts`, then use `docs/manual-verification.md` for host-level or Feishu integration checks.
+Tests use Bun's built-in test runner via `bun test`; no separate test framework is configured. Add or update focused unit tests whenever behavior changes, especially for config parsing, CLI flows, cron handling, and Feishu message paths. Prefer small deterministic tests in `src/**/*.test.ts`, then use `docs/manual-verification.md` for host-level or Feishu integration checks.
 
 ## Commit & Pull Request Guidelines
 

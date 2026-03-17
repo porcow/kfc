@@ -57,6 +57,7 @@ export class LaunchdServiceManager implements KfcServiceManager {
   }
 
   async install(configPath: string): Promise<void> {
+    await this.cleanupRemovedCronTargetsForInstall(configPath);
     const plistPath = await writeServicePlist(configPath);
     await this.execFileAsyncImpl('launchctl', ['bootout', `gui/${process.getuid()}`, plistPath]).catch(
       () => undefined,
@@ -168,6 +169,40 @@ export class LaunchdServiceManager implements KfcServiceManager {
       cleanupErrors.push(...discoveryErrors);
     }
     return targets;
+  }
+
+  private async cleanupRemovedCronTargetsForInstall(configPath: string): Promise<void> {
+    const serviceInstalled = await isServiceInstalled(this.accessImpl);
+    if (!serviceInstalled) {
+      return;
+    }
+
+    const currentConfigPath = await readInstalledServiceConfigPath(servicePlistPath(), this.readFileImpl).catch(
+      () => undefined,
+    );
+    if (!currentConfigPath) {
+      return;
+    }
+
+    const currentTargets = await listCronCleanupTargets(currentConfigPath, this.loadConfigImpl).catch(() => undefined);
+    const nextTargets = await listCronCleanupTargets(configPath, this.loadConfigImpl).catch(() => undefined);
+    if (!currentTargets || !nextTargets) {
+      return;
+    }
+
+    const nextPlists = new Set(nextTargets.map((target) => target.plistPath));
+    const removedTargets = currentTargets.filter((target) => !nextPlists.has(target.plistPath));
+    if (removedTargets.length === 0) {
+      return;
+    }
+
+    const cleanupErrors = await cleanupCronLaunchdJobs(removedTargets, {
+      execFileAsync: this.execFileAsyncImpl,
+      unlink: this.unlinkImpl,
+    });
+    if (cleanupErrors.length > 0) {
+      throw new Error(`Service install failed during cron cleanup:\n- ${cleanupErrors.join('\n- ')}`);
+    }
   }
 }
 

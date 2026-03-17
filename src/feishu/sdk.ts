@@ -4,7 +4,10 @@ import { unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 
 import type {
+  BotAvailabilityHealth,
+  BotWebhookHealth,
   BotWebSocketHealth,
+  IngressMode,
   RunRecord,
   RunUpdateSink,
   ServiceEventType,
@@ -152,6 +155,7 @@ type IngressAwareService = Pick<
 > &
   Partial<{
     claimIngressEvent(eventKey: string, eventType: string): boolean | Promise<boolean>;
+    observeWebhookEvent(eventType: string, now?: string): void;
     logDuplicateIngress(entry: {
       actorId: string;
       eventType: 'im.message.receive_v1' | 'card.action.trigger';
@@ -170,6 +174,8 @@ type ServiceEventAwareService = KidsAlfredService &
     | 'getServiceEventState'
     | 'saveServiceEventState'
     | 'getServiceReconnectNotificationThresholdMs'
+    | 'getIngressMode'
+    | 'getWebhookHealth'
     | 'getConfig'
     | 'getBotId'
   >;
@@ -363,7 +369,7 @@ async function sendServiceEventNotification(
   service: ServiceEventAwareService,
   eventType: ServiceEventType,
   connectedAt: string,
-  options: { heartbeatGapMs?: number } = {},
+  options: { heartbeatGapMs?: number; activeIngress?: BotAvailabilityHealth['activeIngress'] } = {},
 ): Promise<void> {
   const actorIds = service.listServiceEventSubscriberActorIds(eventType);
   if (actorIds.length === 0) {
@@ -376,6 +382,7 @@ async function sendServiceEventNotification(
     host: hostname(),
     loadedAt: service.getConfig().loadedAt,
     heartbeatGapMs: options.heartbeatGapMs,
+    activeIngress: options.activeIngress,
   });
   for (const actorId of actorIds) {
     await sendInteractiveCard(
@@ -401,6 +408,78 @@ async function sendServiceEventNotification(
 
 function isConnectedState(state: BotWebSocketHealth['state']): boolean {
   return state === 'connected';
+}
+
+function buildAvailability(
+  ingressMode: IngressMode,
+  websocket: BotWebSocketHealth,
+  webhook: BotWebhookHealth,
+): BotAvailabilityHealth {
+  if (ingressMode === 'websocket-only') {
+    const ingressAvailable = websocket.state === 'connected';
+    return {
+      ingressAvailable,
+      activeIngress: ingressAvailable ? 'websocket' : 'unknown',
+      degraded: !ingressAvailable,
+      summary: ingressAvailable ? 'Available via WebSocket' : 'Unavailable',
+    };
+  }
+
+  if (websocket.state === 'connected') {
+    return {
+      ingressAvailable: true,
+      activeIngress: 'websocket',
+      degraded: false,
+      summary: 'Available via WebSocket',
+    };
+  }
+
+  if (!webhook.stale && webhook.lastEventReceivedAt) {
+    return {
+      ingressAvailable: true,
+      activeIngress: 'webhook',
+      degraded: true,
+      summary: `Available via webhook fallback while WebSocket is ${websocket.state}`,
+    };
+  }
+
+  return {
+    ingressAvailable: false,
+    activeIngress: 'unknown',
+    degraded: true,
+    summary: 'Unavailable',
+  };
+}
+
+function getIngressModeForService(service: Partial<ServiceEventAwareService>): IngressMode {
+  return service.getIngressMode?.() ?? 'websocket-only';
+}
+
+function getWebhookHealthForService(
+  service: Partial<ServiceEventAwareService>,
+  now: string,
+): BotWebhookHealth {
+  const directHealth = service.getWebhookHealth?.(now);
+  if (directHealth) {
+    return directHealth;
+  }
+  const observation = (service as Partial<{
+    getWebhookObservation(): Partial<BotWebhookHealth>;
+  }>).getWebhookObservation?.();
+  if (observation) {
+    return {
+      enabled: observation.enabled ?? true,
+      configured: observation.configured ?? true,
+      lastEventReceivedAt: observation.lastEventReceivedAt,
+      lastEventType: observation.lastEventType,
+      stale: observation.stale ?? !observation.lastEventReceivedAt,
+    };
+  }
+  return {
+    enabled: false,
+    configured: false,
+    stale: true,
+  };
 }
 
 export async function processServiceConnectionTransition(
@@ -440,19 +519,21 @@ export async function processServiceHeartbeat(
   now: string,
   currentHealth: BotWebSocketHealth,
 ): Promise<void> {
-  if (!isConnectedState(currentHealth.state)) {
+  const availability = buildAvailability(
+    getIngressModeForService(service),
+    currentHealth,
+    getWebhookHealthForService(service, now),
+  );
+  if (!availability.ingressAvailable) {
     return;
   }
 
   const state = service.getServiceEventState();
   const previousHeartbeatSucceededAt = state?.lastHeartbeatSucceededAt;
-  service.saveServiceEventState(
-    {
-      lastConnectedAt: currentHealth.lastConnectedAt ?? now,
-      lastHeartbeatSucceededAt: now,
-    },
-    now,
-  );
+  service.saveServiceEventState({
+    lastConnectedAt: currentHealth.state === 'connected' ? currentHealth.lastConnectedAt ?? now : undefined,
+    lastHeartbeatSucceededAt: now,
+  }, now);
 
   if (!previousHeartbeatSucceededAt) {
     return;
@@ -465,10 +546,11 @@ export async function processServiceHeartbeat(
 
   await sendServiceEventNotification(client, service, 'service_reconnected', now, {
     heartbeatGapMs,
+    activeIngress: availability.activeIngress,
   });
   service.saveServiceEventState(
     {
-      lastConnectedAt: currentHealth.lastConnectedAt ?? now,
+      lastConnectedAt: currentHealth.state === 'connected' ? currentHealth.lastConnectedAt ?? now : undefined,
       lastHeartbeatSucceededAt: now,
       lastReconnectedNotifiedAt: now,
     },
@@ -533,8 +615,14 @@ function detectMessageCommandType(text: string): string {
   if (trimmed === '/help') {
     return 'help';
   }
-  if (trimmed === '/health') {
+  if (trimmed === '/server health') {
     return 'health';
+  }
+  if (trimmed === '/server update') {
+    return 'server_update';
+  }
+  if (trimmed === '/server rollback') {
+    return 'server_rollback';
   }
   if (trimmed === '/tasks') {
     return 'tasks';
@@ -591,9 +679,14 @@ function buildCardActionIngressKey(service: Pick<KidsAlfredService, 'getBotId'>,
 export function createEventDispatcherHandlers(
   service: IngressAwareService,
   client: ReplyClient,
+  options: { source?: 'websocket' | 'webhook' } = {},
 ): Record<string, (data: any) => Promise<unknown>> {
+  const source = options.source ?? 'websocket';
   return {
     'im.message.receive_v1': async (data: any) => {
+      if (source === 'webhook') {
+        service.observeWebhookEvent?.('im.message.receive_v1');
+      }
       const actorId = extractActorId(data);
       const text = parseMessageText(data?.message?.content ?? '');
       const chatId = typeof data?.message?.chat_id === 'string' ? data.message.chat_id : '';
@@ -623,6 +716,9 @@ export function createEventDispatcherHandlers(
       }
     },
     'card.action.trigger': async (data: any) => {
+      if (source === 'webhook') {
+        service.observeWebhookEvent?.('card.action.trigger');
+      }
       const actorId = extractActorId(data);
       const action = extractCardActionPayload(data);
       const eventKey = buildCardActionIngressKey(service, data, actorId, action);
@@ -774,9 +870,10 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
     ),
   );
   service.attachTaskResultDeliverySink(new FeishuTaskResultSink(client));
-  const eventHandlers = createEventDispatcherHandlers(service, client);
+  const websocketEventHandlers = createEventDispatcherHandlers(service, client, { source: 'websocket' });
+  const webhookEventHandlers = createEventDispatcherHandlers(service, client, { source: 'webhook' });
 
-  const eventDispatcher = new sdk.EventDispatcher({}).register(eventHandlers);
+  const eventDispatcher = new sdk.EventDispatcher({}).register(websocketEventHandlers);
 
   const cardHandler = new sdk.CardActionHandler(
     {
@@ -806,7 +903,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
   const eventHandler = new sdk.EventDispatcher({
     verificationToken: service.getConfig().feishu.verificationToken,
     encryptKey: service.getConfig().feishu.encryptKey,
-  }).register(eventHandlers);
+  }).register(webhookEventHandlers);
 
   const cardHttpHandler = sdk.adaptDefault(service.getConfig().server.cardPath, cardHandler);
   const eventHttpHandler = sdk.adaptDefault(service.getConfig().server.eventPath, eventHandler, {

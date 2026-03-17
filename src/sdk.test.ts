@@ -934,3 +934,88 @@ test('service heartbeat skips persistence and notifications while the bot is not
   assert.equal(deliveries.length, 0);
   assert.deepEqual(serviceState, {});
 });
+
+test('service heartbeat treats recent webhook fallback as recovered availability in fallback mode', async () => {
+  const deliveries: any[] = [];
+  const serviceState: any = {};
+  const service = {
+    getBotId() {
+      return 'alpha';
+    },
+    getConfig() {
+      return {
+        loadedAt: '2026-03-15T00:55:00.000Z',
+      };
+    },
+    getIngressMode() {
+      return 'websocket-with-webhook-fallback';
+    },
+    getServiceReconnectNotificationThresholdMs() {
+      return 120000;
+    },
+    listServiceEventSubscriberActorIds(eventType: 'service_online' | 'service_reconnected') {
+      return eventType === 'service_reconnected' ? ['ou_a'] : [];
+    },
+    getServiceEventState() {
+      return { ...serviceState };
+    },
+    saveServiceEventState(update: any) {
+      for (const [key, value] of Object.entries(update)) {
+        if (value === null) {
+          delete serviceState[key];
+        } else {
+          serviceState[key] = value;
+        }
+      }
+      serviceState.updatedAt = '2026-03-15T01:02:00.000Z';
+      return { ...serviceState };
+    },
+    getWebhookObservation() {
+      return {
+        enabled: true,
+        configured: true,
+        lastEventReceivedAt: '2026-03-15T01:02:00.000Z',
+        lastEventType: 'im.message.receive_v1',
+        stale: false,
+      };
+    },
+  };
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async create(request: any) {
+            deliveries.push(request);
+          },
+        },
+      },
+    },
+  };
+
+  await processServiceHeartbeat(
+    service as any,
+    client as any,
+    '2026-03-15T01:00:00.000Z',
+    {
+      state: 'connected',
+      consecutiveReconnectFailures: 0,
+    } as any,
+  );
+
+  await processServiceHeartbeat(
+    service as any,
+    client as any,
+    '2026-03-15T01:02:00.000Z',
+    {
+      state: 'reconnecting',
+      consecutiveReconnectFailures: 0,
+    } as any,
+  );
+
+  assert.equal(deliveries.length, 1);
+  assert.ok(deliveries[0].data.content.includes('Bot 已恢复连接'));
+  assert.ok(deliveries[0].data.content.includes('2分'));
+  assert.ok(deliveries[0].data.content.includes('webhook'));
+  assert.equal(serviceState.lastHeartbeatSucceededAt, '2026-03-15T01:02:00.000Z');
+  assert.equal(serviceState.lastReconnectedNotifiedAt, '2026-03-15T01:02:00.000Z');
+});

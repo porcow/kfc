@@ -363,13 +363,14 @@ test('service returns a task-agnostic help card for authorized users', async () 
 
   assert.equal(help.type, 'card');
   assert.ok(helpJson.includes('Available commands'));
-  assert.ok(helpJson.includes('/health'));
+  assert.ok(helpJson.includes('/server health'));
   assert.ok(helpJson.includes('/tasks'));
   assert.ok(helpJson.includes('/run TASK_ID key=value ...'));
   assert.ok(helpJson.includes('/run-status RUN_ID'));
   assert.ok(helpJson.includes('/cancel RUN_ID'));
   assert.ok(helpJson.includes('/reload'));
   assert.ok(helpJson.includes('/run sc'));
+  assert.ok(!helpJson.includes('`/health`'));
   assert.ok(helpJson.includes('Use `/tasks` to see task-specific example commands.'));
   assert.ok(!helpJson.includes('Builtin echo'));
   assert.ok(!helpJson.includes('/run echo message='));
@@ -409,8 +410,10 @@ test('service help advertises update and rollback only when explicitly configure
   const help = await service.handleMessage('operator-1', '/help');
   const helpJson = JSON.stringify(help.card);
 
-  assert.ok(helpJson.includes('/run update'));
-  assert.ok(helpJson.includes('/run rollback'));
+  assert.ok(helpJson.includes('/server update'));
+  assert.ok(helpJson.includes('/server rollback'));
+  assert.ok(!helpJson.includes('/run update'));
+  assert.ok(!helpJson.includes('/run rollback'));
 
   await service.close();
 });
@@ -438,33 +441,116 @@ test('service returns health from the shared snapshot for authorized users', asy
     ok: true,
     loadedAt: '2026-03-14T08:00:00.000Z',
     bots: ['alpha', 'beta'],
-    websocket: {
+    ingressMode: 'websocket-with-webhook-fallback',
+    degraded: true,
+    botHealth: {
       alpha: {
-        state: 'connected',
-        consecutiveReconnectFailures: 0,
+        websocket: {
+          state: 'connected',
+          consecutiveReconnectFailures: 0,
+        },
+        webhook: {
+          enabled: true,
+          configured: true,
+          stale: false,
+        },
+        availability: {
+          ingressAvailable: true,
+          activeIngress: 'websocket',
+          degraded: false,
+          summary: 'Available via WebSocket',
+        },
       },
       beta: {
-        state: 'reconnecting',
-        consecutiveReconnectFailures: 2,
-        nextReconnectAt: '2026-03-14T08:10:00.000Z',
+        websocket: {
+          state: 'reconnecting',
+          consecutiveReconnectFailures: 2,
+          nextReconnectAt: '2026-03-14T08:10:00.000Z',
+        },
+        webhook: {
+          enabled: true,
+          configured: true,
+          lastEventReceivedAt: '2026-03-14T08:09:30.000Z',
+          lastEventType: 'im.message.receive_v1',
+          stale: false,
+        },
+        availability: {
+          ingressAvailable: true,
+          activeIngress: 'webhook',
+          degraded: true,
+          summary: 'Available via webhook fallback while WebSocket is reconnecting',
+        },
       },
     },
-    ready: false,
+    ready: true,
   }));
 
-  const health = await service.handleMessage('operator-1', '/health', { chatId: 'chat-health-1' });
+  const health = await service.handleMessage('operator-1', '/server health', { chatId: 'chat-health-1' });
   const healthJson = JSON.stringify(health.card);
 
   assert.equal(health.type, 'card');
   assert.ok(healthJson.includes('Service health'));
-  assert.ok(healthJson.includes('Ready: **false**'));
+  assert.ok(healthJson.includes('Ready: **true**'));
+  assert.ok(healthJson.includes('Ingress mode: **websocket-with-webhook-fallback**'));
+  assert.ok(healthJson.includes('Available: **true**'));
+  assert.ok(healthJson.includes('Active ingress: **webhook**'));
+  assert.ok(healthJson.includes('Degraded: **true**'));
   assert.ok(healthJson.includes('alpha'));
   assert.ok(healthJson.includes('beta'));
   assert.ok(healthJson.includes('reconnecting'));
   assert.ok(healthJson.includes(formatFeishuTimestamp('2026-03-14T08:00:00.000Z')));
   assert.ok(healthJson.includes(formatFeishuTimestamp('2026-03-14T08:10:00.000Z')));
+  assert.ok(healthJson.includes(formatFeishuTimestamp('2026-03-14T08:09:30.000Z')));
   assert.ok(!healthJson.includes('2026-03-14T08:00:00.000Z'));
   assert.ok(!healthJson.includes('2026-03-14T08:10:00.000Z'));
+  assert.ok(!healthJson.includes('2026-03-14T08:09:30.000Z'));
+
+  await service.close();
+});
+
+test('service routes /server update and /server rollback through the existing confirmation flow only when configured', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-server-commands-'));
+  const databasePath = join(directory, 'runs.sqlite');
+  const botConfig = createBotConfig('alpha', databasePath);
+  botConfig.tasks.update = {
+    id: 'update',
+    runnerKind: 'builtin-tool',
+    executionMode: 'oneshot',
+    description: 'Update this deployment to the latest stable GitHub Release',
+    tool: 'self-update',
+    timeoutMs: 300000,
+    cancellable: false,
+    parameters: {},
+  };
+  botConfig.tasks.rollback = {
+    id: 'rollback',
+    runnerKind: 'builtin-tool',
+    executionMode: 'oneshot',
+    description: 'Rollback this deployment to the previous local install',
+    tool: 'self-rollback',
+    timeoutMs: 300000,
+    cancellable: false,
+    parameters: {},
+  };
+  const service = new KidsAlfredService(botConfig);
+
+  const updateConfirmation = await service.handleMessage('operator-1', '/server update', { chatId: 'chat-update-1' });
+  const updateJson = JSON.stringify(updateConfirmation.card);
+  assert.ok(updateJson.includes('"type":"confirm_task"'));
+  assert.ok(updateJson.includes('update'));
+
+  const rollbackConfirmation = await service.handleMessage('operator-1', '/server rollback', {
+    chatId: 'chat-rollback-1',
+  });
+  const rollbackJson = JSON.stringify(rollbackConfirmation.card);
+  assert.ok(rollbackJson.includes('"type":"confirm_task"'));
+  assert.ok(rollbackJson.includes('rollback'));
+
+  const oldUpdate = await service.handleMessage('operator-1', '/run update', { chatId: 'chat-update-legacy' });
+  assert.ok(JSON.stringify(oldUpdate.card).includes('Unsupported command'));
+
+  const oldRollback = await service.handleMessage('operator-1', '/run rollback', { chatId: 'chat-rollback-legacy' });
+  assert.ok(JSON.stringify(oldRollback.card).includes('Unsupported command'));
 
   await service.close();
 });
@@ -586,7 +672,7 @@ test('message and card handlers return authorization and validation feedback as 
   assert.ok(JSON.stringify(unauthorizedHelp.card).includes('kfc pair alpha-'));
   assert.ok(!JSON.stringify(unauthorizedHelp.card).includes('Available commands'));
 
-  const unauthorizedHealth = await service.handleMessage('unknown-user', '/health');
+  const unauthorizedHealth = await service.handleMessage('unknown-user', '/server health');
   assert.equal(unauthorizedHealth.type, 'error');
   assert.ok(JSON.stringify(unauthorizedHealth.card).includes('kfc pair alpha-'));
   assert.ok(!JSON.stringify(unauthorizedHealth.card).includes('Service health'));

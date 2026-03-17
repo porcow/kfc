@@ -1,4 +1,12 @@
-import type { AppConfig, BotWebSocketHealth, ReloadResult, RouteKind, RunUpdateSink } from './domain.ts';
+import type {
+  AppConfig,
+  BotWebhookHealth,
+  BotWebSocketHealth,
+  IngressMode,
+  ReloadResult,
+  RouteKind,
+  RunUpdateSink,
+} from './domain.ts';
 import { loadConfig } from './config/schema.ts';
 import { createFeishuSdkBridge, type BotBridge } from './feishu/sdk.ts';
 import { buildHealthSnapshot } from './health.ts';
@@ -55,6 +63,10 @@ export class BotManager {
     return this.config.loadedAt;
   }
 
+  getIngressMode(): IngressMode {
+    return this.config.server.ingressMode;
+  }
+
   listBotIds(): string[] {
     return [...this.runtimes.keys()].sort();
   }
@@ -68,6 +80,14 @@ export class BotManager {
       [...this.runtimes.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([botId, runtime]) => [botId, runtime.bridge.getWebSocketHealth()]),
+    );
+  }
+
+  getBotWebhookHealth(): Record<string, BotWebhookHealth> {
+    return Object.fromEntries(
+      [...this.runtimes.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([botId, runtime]) => [botId, runtime.service.getWebhookHealth()]),
     );
   }
 
@@ -202,6 +222,7 @@ export class BotManager {
         repository,
         undefined,
         config.server.serviceReconnectNotificationThresholdMs,
+        config.server.ingressMode,
       );
       const bridge = await this.bridgeFactory(service);
       service.reconcileServiceEventSubscriptions();

@@ -4,6 +4,7 @@ export type ParameterType = 'string' | 'number' | 'boolean';
 export type ToolConfigValue = string | number | boolean;
 export type RouteKind = 'card' | 'event';
 export type WebSocketState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
+export type IngressMode = 'websocket-only' | 'websocket-with-webhook-fallback';
 export type RunState =
   | 'pending_confirmation'
   | 'queued'
@@ -55,6 +56,7 @@ export interface GlobalServerConfig {
   port: number;
   healthPath: string;
   serviceReconnectNotificationThresholdMs: number;
+  ingressMode: IngressMode;
 }
 
 export interface BotConfig {
@@ -264,10 +266,34 @@ export interface BotWebSocketHealth {
   warning?: string;
 }
 
+export interface BotWebhookHealth {
+  enabled: boolean;
+  configured: boolean;
+  lastEventReceivedAt?: string;
+  lastEventType?: string;
+  stale: boolean;
+}
+
+export interface BotAvailabilityHealth {
+  ingressAvailable: boolean;
+  activeIngress: 'websocket' | 'webhook' | 'unknown';
+  degraded: boolean;
+  summary: string;
+}
+
+export interface BotIngressHealth {
+  websocket: BotWebSocketHealth;
+  webhook: BotWebhookHealth;
+  availability: BotAvailabilityHealth;
+}
+
 export interface AppHealthSnapshot {
   ok: true;
   loadedAt: string;
   bots: string[];
+  ingressMode: IngressMode;
   websocket: Record<string, BotWebSocketHealth>;
+  botHealth: Record<string, BotIngressHealth>;
+  degraded: boolean;
   ready: boolean;
 }

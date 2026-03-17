@@ -1468,6 +1468,138 @@ test('service uninstall falls back to scanning cron plists when installed config
   }
 });
 
+test('service install removes cronjobs deleted from the previously installed config before refreshing the main service', async () => {
+  const previousHome = process.env.HOME;
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-install-cleanup-'));
+  process.env.HOME = directory;
+
+  const oldConfigPath = join(directory, 'old-config.toml');
+  const newConfigPath = join(directory, 'new-config.toml');
+  const servicePlist = join(directory, 'Library', 'LaunchAgents', 'com.kidsalfred.service.plist');
+  const oldSqlitePath = join(directory, '.kfc', 'data', 'ops.sqlite');
+  const sharedSqlitePath = join(directory, '.kfc', 'data', 'shared.sqlite');
+  const deletedCronPlist = cronLaunchdPlistPath(oldSqlitePath, 'ops', 'old-task');
+  const retainedCronPlist = cronLaunchdPlistPath(sharedSqlitePath, 'ops', 'keep-task');
+
+  await mkdir(join(directory, 'Library', 'LaunchAgents'), { recursive: true });
+  await mkdir(join(directory, '.kfc', 'data', 'launchd'), { recursive: true });
+  await writeFile(
+    oldConfigPath,
+    `
+[server]
+port = 3100
+
+[bots.ops]
+allowed_users = ["ou_ops"]
+
+[bots.ops.server]
+card_path = "/bots/ops/webhook/card"
+event_path = "/bots/ops/webhook/event"
+
+[bots.ops.storage]
+sqlite_path = "${sharedSqlitePath}"
+
+[bots.ops.feishu]
+app_id = "ops-app"
+app_secret = "ops-secret"
+
+[bots.ops.tasks.old-task]
+runner_kind = "builtin-tool"
+execution_mode = "cronjob"
+description = "Old task"
+tool = "checkPDWin11"
+timeout_ms = 5000
+cancellable = false
+
+[bots.ops.tasks.old-task.cron]
+schedule = "*/5 * * * *"
+auto_start = true
+
+[bots.ops.tasks.keep-task]
+runner_kind = "external-command"
+execution_mode = "cronjob"
+description = "Keep task"
+command = "/bin/echo"
+args = ["keep"]
+timeout_ms = 5000
+cancellable = false
+
+[bots.ops.tasks.keep-task.cron]
+schedule = "0 * * * *"
+auto_start = true
+`,
+  );
+  await writeFile(
+    newConfigPath,
+    `
+[server]
+port = 3100
+
+[bots.ops]
+allowed_users = ["ou_ops"]
+
+[bots.ops.server]
+card_path = "/bots/ops/webhook/card"
+event_path = "/bots/ops/webhook/event"
+
+[bots.ops.storage]
+sqlite_path = "${sharedSqlitePath}"
+
+[bots.ops.feishu]
+app_id = "ops-app"
+app_secret = "ops-secret"
+
+[bots.ops.tasks.keep-task]
+runner_kind = "external-command"
+execution_mode = "cronjob"
+description = "Keep task"
+command = "/bin/echo"
+args = ["keep"]
+timeout_ms = 5000
+cancellable = false
+
+[bots.ops.tasks.keep-task.cron]
+schedule = "0 * * * *"
+auto_start = true
+`,
+  );
+  await writeFile(
+    servicePlist,
+    `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>EnvironmentVariables</key><dict><key>KIDS_ALFRED_CONFIG</key><string>${oldConfigPath}</string></dict></dict></plist>`,
+  );
+  await writeFile(deletedCronPlist, 'old', 'utf8');
+  await writeFile(retainedCronPlist, 'keep', 'utf8');
+
+  const calls: string[] = [];
+  const removed: string[] = [];
+  try {
+    const manager = new LaunchdServiceManager({
+      execFileAsync: async (_file, args) => {
+        calls.push(args.join(' '));
+        return { stdout: '', stderr: '' };
+      },
+      unlink: async (path) => {
+        removed.push(path);
+      },
+    });
+
+    await manager.install(newConfigPath);
+
+    assert.ok(calls.includes(`bootout gui/${process.getuid()} ${deletedCronPlist}`));
+    assert.ok(!calls.includes(`bootout gui/${process.getuid()} ${retainedCronPlist}`));
+    assert.ok(calls.includes(`bootout gui/${process.getuid()} ${servicePlist}`));
+    assert.ok(calls.includes(`bootstrap gui/${process.getuid()} ${servicePlist}`));
+    assert.ok(calls.includes(`kickstart -k gui/${process.getuid()}/com.kidsalfred.service`));
+    assert.deepEqual(removed, [deletedCronPlist]);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});
+
 test('executeConfiguredTask fans out bot-scoped notification intents to subscribed chats', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-kfc-pd-'));
   const configPath = join(directory, 'bot.toml');

@@ -111,6 +111,12 @@ function buildExampleValue(name: string, definition: ParameterDefinition): strin
 }
 
 function buildExampleCommand(task: TaskDefinition): string {
+  if (task.id === 'update') {
+    return '/server update';
+  }
+  if (task.id === 'rollback') {
+    return '/server rollback';
+  }
   const parameters = Object.entries(task.parameters).map(([name, definition]) =>
     buildExampleValue(name, definition),
   );
@@ -235,11 +241,11 @@ export function buildHelpCard(
   options: { hasScreencaptureTask?: boolean; hasUpdateTask?: boolean; hasRollbackTask?: boolean } = {},
 ): CardResponse {
   const lines = [
-    '`/health`',
+    '`/server health`',
     'Show service readiness and per-bot WebSocket health.',
     '',
     '`/tasks`',
-    'List available tasks and their example `/run` commands.',
+    'List available tasks and their example commands.',
     '',
     '`/run TASK_ID key=value ...`',
     'Validate parameters and return a confirmation card before execution.',
@@ -248,10 +254,10 @@ export function buildHelpCard(
     lines.push('Use `/run sc` to capture the current screen through the standard one-shot flow.');
   }
   if (options.hasUpdateTask) {
-    lines.push('Use `/run update` to check the latest stable release and update this deployment after confirmation.');
+    lines.push('Use `/server update` to check the latest stable release and update this deployment after confirmation.');
   }
   if (options.hasRollbackTask) {
-    lines.push('Use `/run rollback` to restore the previous locally installed version after confirmation.');
+    lines.push('Use `/server rollback` to restore the previous locally installed version after confirmation.');
   }
   lines.push(
     '',
@@ -290,25 +296,36 @@ function formatHealthDetails(snapshot: AppHealthSnapshot): string {
   const botLines = snapshot.bots.length === 0
     ? ['- No active bots']
     : snapshot.bots.map((botId) => {
-        const health = snapshot.websocket[botId];
+        const health = snapshot.botHealth[botId];
         const details = [
-          `- **${botId}**: **${health?.state ?? 'unknown'}**`,
-          health?.lastConnectedAt
-            ? `  - Last connected: \`${formatFeishuTimestamp(health.lastConnectedAt)}\``
+          `- **${botId}**`,
+          `  - Available: **${health?.availability.ingressAvailable ? 'true' : 'false'}**`,
+          `  - Active ingress: **${health?.availability.activeIngress ?? 'unknown'}**`,
+          `  - Degraded: **${health?.availability.degraded ? 'true' : 'false'}**`,
+          `  - WebSocket: **${health?.websocket.state ?? 'unknown'}**`,
+          health?.websocket.lastConnectedAt
+            ? `  - Last connected: \`${formatFeishuTimestamp(health.websocket.lastConnectedAt)}\``
             : '',
-          health?.nextReconnectAt
-            ? `  - Next reconnect: \`${formatFeishuTimestamp(health.nextReconnectAt)}\``
+          health?.websocket.nextReconnectAt
+            ? `  - Next reconnect: \`${formatFeishuTimestamp(health.websocket.nextReconnectAt)}\``
             : '',
-          health?.consecutiveReconnectFailures !== undefined
-            ? `  - Reconnect failures: **${health.consecutiveReconnectFailures}**`
+          health?.websocket.consecutiveReconnectFailures !== undefined
+            ? `  - Reconnect failures: **${health.websocket.consecutiveReconnectFailures}**`
             : '',
-          health?.warning ? `  - Warning: ${health.warning}` : '',
+          `  - Webhook fallback: **${health?.webhook.enabled ? 'enabled' : 'disabled'}**`,
+          health?.webhook.lastEventReceivedAt
+            ? `  - Webhook last event: \`${formatFeishuTimestamp(health.webhook.lastEventReceivedAt)}\``
+            : '',
+          health?.webhook.lastEventType ? `  - Webhook event type: \`${health.webhook.lastEventType}\`` : '',
+          health?.websocket.warning ? `  - Warning: ${health.websocket.warning}` : '',
         ].filter(Boolean);
         return details.join('\n');
       });
 
   return [
     `Ready: **${snapshot.ready ? 'true' : 'false'}**`,
+    `Degraded: **${snapshot.degraded ? 'true' : 'false'}**`,
+    `Ingress mode: **${snapshot.ingressMode}**`,
     `Loaded at: \`${formatFeishuTimestamp(snapshot.loadedAt)}\``,
     '',
     '**Bots**',
@@ -330,6 +347,7 @@ export function buildServiceEventNotificationCard(options: {
   host: string;
   loadedAt?: string;
   heartbeatGapMs?: number;
+  activeIngress?: 'websocket' | 'webhook' | 'unknown';
 }): Record<string, unknown> {
   if (options.eventType === 'service_online') {
     const lines = [
@@ -352,6 +370,7 @@ export function buildServiceEventNotificationCard(options: {
           `Bot: **${options.botId}**`,
           `Reconnected at: \`${formatFeishuTimestamp(options.connectedAt)}\``,
           `Heartbeat gap: **${heartbeatGap}**`,
+          `Recovery ingress: **${options.activeIngress ?? 'unknown'}**`,
           `Host: \`${options.host}\``,
         ].join('\n'),
       ),

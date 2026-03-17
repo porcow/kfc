@@ -140,6 +140,77 @@ cancellable = true
   assert.equal(config.server.serviceReconnectNotificationThresholdMs, 120000);
 });
 
+test('loadConfig defaults ingress mode to websocket-only', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-ingress-default-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.echo]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Builtin echo"
+tool = "echo"
+timeout_ms = 5000
+cancellable = true
+`,
+  );
+
+  const config = await loadConfig(configPath);
+
+  assert.equal(config.server.ingressMode, 'websocket-only');
+});
+
+test('loadConfig accepts webhook fallback ingress mode', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-ingress-fallback-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+ingress_mode = "websocket-with-webhook-fallback"
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.server]
+card_path = "/bots/alpha/webhook/card"
+event_path = "/bots/alpha/webhook/event"
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.echo]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Builtin echo"
+tool = "echo"
+timeout_ms = 5000
+cancellable = true
+`,
+  );
+
+  const config = await loadConfig(configPath);
+
+  assert.equal(config.server.ingressMode, 'websocket-with-webhook-fallback');
+});
+
 test('loadConfig accepts explicit sc configuration and keeps its protected binding', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-sc-'));
   const configPath = join(directory, 'bot.toml');

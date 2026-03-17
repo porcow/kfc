@@ -7,14 +7,22 @@ The system SHALL allow an authorized Feishu user to request the list of availabl
 #### Scenario: Authorized user requests command help
 - **WHEN** a Feishu user in the allowed user list invokes the bot help command
 - **THEN** the system returns an informational help response that documents the supported text commands
-- **AND** the help response includes at least `/health`, `/tasks`, `/run TASK_ID key=value ...`, `/cron list`, `/cron start TASK_ID`, `/cron stop TASK_ID`, `/cron status`, `/run-status RUN_ID`, `/cancel RUN_ID`, and `/reload`
+- **AND** the help response includes at least `/server health`, `/server update`, `/server rollback`, `/tasks`, `/run TASK_ID key=value ...`, `/cron list`, `/cron start TASK_ID`, `/cron stop TASK_ID`, `/cron status`, `/run-status RUN_ID`, `/cancel RUN_ID`, and `/reload`
 - **AND** the help response only references `/run sc` when the current bot has explicitly configured task `sc`
 - **AND** the help response directs the user to `/tasks` for task-specific example commands rather than duplicating the full task catalog
 
-#### Scenario: Authorized user requests bot health from Feishu
-- **WHEN** a Feishu user in the allowed user list sends `/health`
-- **THEN** the system returns an informational response that summarizes service readiness
+#### Scenario: Authorized user requests bot health from Feishu in websocket-only mode
+- **WHEN** a Feishu user in the allowed user list sends `/server health`
+- **AND** the active service ingress mode is `websocket-only`
+- **THEN** the system returns an informational response that summarizes service readiness under the strict WebSocket-only policy
 - **AND** it includes the active bot IDs and each bot's current WebSocket health state
+
+#### Scenario: Authorized user requests bot health while webhook fallback is active
+- **WHEN** a Feishu user in the allowed user list sends `/server health`
+- **AND** the active service ingress mode is `websocket-with-webhook-fallback`
+- **THEN** the system returns an informational response that includes the ingress mode, each bot's effective availability, and the active ingress transport
+- **AND** if a bot is available only through webhook fallback it marks that bot as degraded rather than reporting a generic failure
+- **AND** it includes the current WebSocket state plus the latest webhook fallback observation details needed to explain that degraded-but-available state
 
 #### Scenario: Authorized user requests a screen capture through the standard run flow
 - **WHEN** a Feishu user in the allowed user list sends `/run sc`
@@ -23,22 +31,33 @@ The system SHALL allow an authorized Feishu user to request the list of availabl
 - **AND** it follows the standard confirmation flow before execution
 - **AND** after confirmation it delivers the resulting screenshot back to the same Feishu chat where the command was issued
 
-#### Scenario: Authorized user requests self-update through the standard run flow
-- **WHEN** an authorized Feishu user sends `/run update`
+#### Scenario: Authorized user requests self-update through the service command flow
+- **WHEN** an authorized Feishu user sends `/server update`
 - **AND** the current bot has explicitly configured task `update`
-- **THEN** the system treats `update` as a configured oneshot task
+- **THEN** the system routes the request into the same configured oneshot self-update task workflow previously used by `/run update`
+- **AND** it follows the standard confirmation flow before execution
+
+#### Scenario: Authorized user requests service rollback through the service command flow
+- **WHEN** an authorized Feishu user sends `/server rollback`
+- **AND** the current bot has explicitly configured task `rollback`
+- **THEN** the system routes the request into the same configured oneshot rollback task workflow previously used by `/run rollback`
 - **AND** it follows the standard confirmation flow before execution
 
 #### Scenario: Authorized user requests the task list
 - **WHEN** a Feishu user in the allowed user list invokes the bot's task-list action
 - **THEN** the system returns the predefined one-shot tasks that are available to that user with their descriptions
-- **AND** the returned card includes an example `/run TASK_ID key=value ...` command string for each listed task
+- **AND** the returned card includes an example command string for each listed task
 - **AND** task `sc` appears only when the current bot has explicitly configured it
 
 #### Scenario: Bot omits explicit `update` task configuration
 - **WHEN** a bot does not declare task `update`
-- **THEN** `/run update` is rejected as an unknown task for that bot
-- **AND** `/help` and `/tasks` do not advertise update as an available run target
+- **THEN** `/server update` is rejected as unavailable for that bot
+- **AND** `/help` and `/tasks` do not advertise service update as an available action
+
+#### Scenario: Bot omits explicit `rollback` task configuration
+- **WHEN** a bot does not declare task `rollback`
+- **THEN** `/server rollback` is rejected as unavailable for that bot
+- **AND** `/help` and `/tasks` do not advertise service rollback as an available action
 
 #### Scenario: Unauthorized user requests the task list
 - **WHEN** a Feishu user outside the allowed user list invokes the bot's task-list action
@@ -134,31 +153,31 @@ The system SHALL send status-oriented updates for a run and allow authorized use
 - **THEN** the system does not create a second run and returns the existing `run_id` or equivalent duplicate-safe response
 
 #### Scenario: Release update check reports no available update
-- **WHEN** an authorized user confirms `/run update`
+- **WHEN** an authorized user confirms `/server update`
 - **AND** the local service determines that no newer supported GitHub Release is available
 - **THEN** the run completes successfully without downloading or reinstalling a release asset
 - **AND** the Feishu-facing result clearly states that the service is already on the latest version
 
 #### Scenario: Release update inspection uses only the latest stable release
-- **WHEN** an authorized user confirms `/run update`
+- **WHEN** an authorized user confirms `/server update`
 - **AND** the local service inspects remote release availability
 - **THEN** it uses only the latest stable GitHub Release for update comparison
 - **AND** it excludes draft and prerelease releases from update availability decisions
 
 #### Scenario: Release update check reports an available update
-- **WHEN** an authorized user confirms `/run update`
+- **WHEN** an authorized user confirms `/server update`
 - **AND** the local service determines that a newer supported GitHub Release is available
 - **THEN** the system executes the release-based self-update workflow
 - **AND** the final Feishu-facing result states that the update completed
 - **AND** it includes the current version information
 
 #### Scenario: Update execution failure is surfaced through run status
-- **WHEN** `/run update` reaches the execution phase and release lookup, download, extraction, dependency install, verification, or service refresh fails
+- **WHEN** `/server update` reaches the execution phase and release lookup, download, extraction, dependency install, verification, or service refresh fails
 - **THEN** the run is marked failed
 - **AND** the Feishu-facing run summary explains which update step failed
 
 #### Scenario: Update execution failure reports successful automatic rollback
-- **WHEN** `/run update` has already activated the staged app
+- **WHEN** `/server update` has already activated the staged app
 - **AND** the subsequent service refresh fails
 - **AND** the system successfully restores the previous local install automatically
 - **THEN** the run is marked failed
@@ -166,7 +185,7 @@ The system SHALL send status-oriented updates for a run and allow authorized use
 - **AND** it explicitly states that the service was rolled back to the restored previous version
 
 #### Scenario: Update execution failure reports failed automatic rollback
-- **WHEN** `/run update` has already activated the staged app
+- **WHEN** `/server update` has already activated the staged app
 - **AND** the subsequent service refresh fails
 - **AND** the system cannot restore the previous local install automatically
 - **THEN** the run is marked failed
@@ -174,25 +193,25 @@ The system SHALL send status-oriented updates for a run and allow authorized use
 - **AND** it instructs the operator that manual recovery is required
 
 #### Scenario: Rollback is unavailable
-- **WHEN** an authorized user confirms `/run rollback`
+- **WHEN** an authorized user confirms `/server rollback`
 - **AND** no previous locally installed version is available
 - **THEN** the run is marked failed
 - **AND** the Feishu-facing run summary clearly states that no rollback version is available
 
 #### Scenario: Rollback completes successfully
-- **WHEN** an authorized user confirms `/run rollback`
+- **WHEN** an authorized user confirms `/server rollback`
 - **AND** a previous locally installed version is available
 - **THEN** the system swaps to that previous version and refreshes the managed service
 - **AND** the final Feishu-facing result states that rollback completed
 - **AND** it includes the current version information
 
 #### Scenario: Rollback execution failure is surfaced through run status
-- **WHEN** `/run rollback` reaches the execution phase and validation, filesystem swap, or service refresh fails
+- **WHEN** `/server rollback` reaches the execution phase and validation, filesystem swap, or service refresh fails
 - **THEN** the run is marked failed
 - **AND** the Feishu-facing run summary explains which rollback step failed
 
 #### Scenario: Rollback execution failure reports automatic restore status
-- **WHEN** `/run rollback` has already started swapping `app` and `app.previous`
+- **WHEN** `/server rollback` has already started swapping `app` and `app.previous`
 - **AND** the subsequent validation or service refresh fails
 - **THEN** the run is marked failed
 - **AND** the Feishu-facing run summary explains which rollback step failed
@@ -266,7 +285,7 @@ The system SHALL render every human-facing timestamp sent through the Feishu cha
 - **THEN** every displayed run timestamp, including start and finish times when present, uses the format `YYYY/MM/DD HH:mm:ss`
 
 #### Scenario: Health reply includes formatted timestamps
-- **WHEN** the system renders a `/health` response to Feishu and includes any human-facing timestamp fields
+- **WHEN** the system renders a `/server health` response to Feishu and includes any human-facing timestamp fields
 - **THEN** those timestamps use the format `YYYY/MM/DD HH:mm:ss`
 
 #### Scenario: Different Feishu reply paths stay consistent
@@ -312,4 +331,3 @@ The system SHALL preserve its Feishu command, card, messaging, and upload behavi
 #### Scenario: Bun-only runtime preserves Feishu command handling
 - **WHEN** the service handles Feishu text commands, card callbacks, and result delivery under the supported runtime
 - **THEN** the system preserves the existing Feishu-facing behavior for task execution, status cards, health replies, and uploads
-
