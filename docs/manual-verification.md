@@ -6,8 +6,6 @@
 2. Repeat the app setup for each bot configured in the TOML file.
 3. Enable event subscriptions for `im.message.receive_v1`.
 4. Configure long-connection mode for event subscriptions.
-5. Configure interactive card callback URLs such as `http://<host>:3000/bots/ops/webhook/card` and `http://<host>:3000/bots/support/webhook/card`.
-6. Keep webhook fallback event URLs ready such as `http://<host>:3000/bots/ops/webhook/event`.
 
 ## Service Setup
 
@@ -16,7 +14,7 @@
 3. Install and start the service with `./kfc service install --config /path/to/bot.toml`.
 4. Make the local admin wrapper executable with `chmod +x ./kfc`.
 5. Confirm `/health` returns `200 OK` and lists the active bot IDs.
-6. Confirm `/health` also reports ingress mode plus per-bot WebSocket and webhook-fallback state, and that `ready` follows the configured ingress mode rather than always requiring all bots to be WebSocket-connected.
+6. Confirm `/health` reports per-bot WebSocket transport and ingress observation state, and that `ready` follows actual WebSocket serviceability rather than a stale transport-state-only inference.
 7. Confirm the process stdout shows JSON event logs with `logType: "feishu_inbound_event"` when supported Feishu messages or card actions reach bot business logic.
 8. Confirm `bun run dev`, `bun run start`, and `bun run test` all execute the repository-local workflow through Bun, and that direct `bun test` is supported for the full repository suite.
 9. Confirm the installed `~/.local/bin/kfc` launcher executes through Bun, that generated main-service and cronjob plists use Bun program arguments, and that `install.sh` no longer requires Node.
@@ -25,26 +23,28 @@
 
 1. Send `/help` from an allowed Feishu user and confirm the reply lists `/server health`, `/server update`, `/server rollback`, `/tasks`, `/run TASK_ID key=value ...`, `/run-status RUN_ID`, `/cancel RUN_ID`, and `/reload`.
 2. Confirm the `/help` reply does not duplicate the full task catalog and instead points the user to `/tasks`.
-3. Send `/server health` from an allowed Feishu user and confirm the reply summarizes service readiness, ingress mode, active bot IDs, and each bot's availability / active ingress state.
-4. Confirm every human-facing timestamp shown in Feishu cards or replies uses `YYYY/MM/DD HH:mm:ss` rather than mixed ISO strings.
-5. Confirm `service_online` is emitted only once after the bot first reaches `connected` in the current main-service process session.
-6. Confirm `service_reconnected` is not emitted for short reconnect churn, and is emitted only after a successful availability heartbeat occurs following a gap greater than the configured threshold under the active ingress mode.
-7. Send `/tasks` from an allowed Feishu user in bot A and confirm bot A's one-shot task list card arrives.
-8. Send `/tasks` from an allowed Feishu user in bot B and confirm bot B's task list is different if configured differently.
-7. For a bot that explicitly configures task `sc`, send `/run sc` from an allowed Feishu user and confirm:
+3. Send `/server health` from an allowed Feishu user and confirm the reply summarizes service readiness, active bot IDs, and each bot's availability / active ingress state.
+4. Under long-connection mode, if the bot is still responding while WebSocket transport state is degraded, confirm `/server health` can still show the bot as available via recent WebSocket ingress rather than reporting a false unavailable state.
+5. Confirm every human-facing timestamp shown in Feishu cards or replies uses `YYYY/MM/DD HH:mm:ss` rather than mixed ISO strings.
+6. Confirm `service_online` is emitted only once after the bot first reaches `connected` in the current main-service process session.
+7. Confirm `service_reconnected` is not emitted for short reconnect churn, and is emitted only after a successful availability heartbeat occurs following a gap greater than the configured threshold under the active ingress mode.
+8. Send `/tasks` from an allowed Feishu user in bot A and confirm bot A's one-shot task list card arrives.
+9. Send `/tasks` from an allowed Feishu user in bot B and confirm bot B's task list is different if configured differently.
+10. For a bot that explicitly configures task `sc`, send `/run sc` from an allowed Feishu user and confirm:
    - the bot returns the normal confirmation card rather than using a dedicated `/sc` shortcut
    - confirming the request captures the current screen and sends the screenshot image back to the same chat
    - the temporary screenshot file under `~/.kfc/data/screenshot-YYYYMMDD-HHmmss.png` is deleted after successful image delivery
    - if Feishu image upload or send fails, the run surfaces a clear failure and the screenshot file remains on disk for debugging
-8. For a bot that explicitly configures task `update`, send `/server update` and confirm:
+11. For a bot that explicitly configures task `update`, send `/server update` and confirm:
    - the bot returns the normal one-shot confirmation card
    - if the latest stable GitHub Release matches the local install metadata, the confirmed run succeeds with an `already latest` style summary
-   - if a newer stable release is available, the confirmed run stages the release under `app.new`, refreshes the managed service, and reports the new version in the terminal summary
+   - if a newer stable release is available, the confirmed run enters `running`, hands the refresh phase off to a detached helper, and the terminal summary arrives after service restart
+   - confirm the detached helper does not disappear when the old `com.kidsalfred.service` job is booted out
    - if service refresh fails after swap but automatic rollback succeeds, the run fails with a summary that explicitly says the update failed and the service was restored to the previous version
    - if update and automatic rollback both fail, the run fails with a summary that explicitly says manual recovery is required
 9. For a bot that explicitly configures task `rollback`, send `/server rollback` and confirm:
    - the bot returns the normal one-shot confirmation card
-   - if `app.previous` and matching install metadata are present, the confirmed run swaps to the previous local version and reports the restored current version
+   - if `app.previous` and matching install metadata are present, the confirmed run hands the refresh phase off to a detached helper and reports the restored current version after service restart
    - if no rollback target exists, the run fails with `no rollback version is available`
    - if service refresh fails after swap, the run summary explicitly states whether automatic restoration succeeded or manual recovery is required
 10. Trigger one `builtin-tool` task and confirm:
@@ -103,11 +103,9 @@
 ## WebSocket Fallback Drill
 
 1. Stop or block the WebSocket connection path.
-2. Confirm `/server health` reports the affected bot as `reconnecting` or `disconnected`, includes a reconnect counter, and surfaces a warning that references the bot's `/bots/<id>/webhook/event` fallback endpoint once the failure threshold is exceeded.
-3. Switch the app's event subscription mode to webhook delivery.
-4. Confirm the relevant `/bots/<id>/webhook/event` endpoint accepts the event challenge and `/tasks` still works for that bot.
-5. If `server.ingress_mode = "websocket-with-webhook-fallback"`, confirm `/server health` marks the bot as degraded but still available with `active ingress = webhook`.
-6. Restore long-connection mode after the incident and confirm `/server health` returns the bot to `connected` with the reconnect failure counter reset.
+2. Confirm `/server health` reports the affected bot as `reconnecting` or `disconnected`, includes a reconnect counter, and surfaces a reconnect warning after the failure threshold is exceeded.
+3. While the app is still configured for long connection, send a command that reaches the bot and confirm `/server health` can report `active ingress = websocket` plus a recent WebSocket event observation even if transport state remains `reconnecting`.
+4. Confirm `/server health` returns the bot to `connected` with the reconnect failure counter reset after recovery.
 
 ## Reload And Shutdown Checks
 
@@ -124,9 +122,9 @@
 1. Run `./kfc exec --bot ops --task echo-tool` and confirm the task executes locally using its config-defined default parameters, or reports a validation error if the task requires parameters without defaults.
 2. Run `./kfc health` and confirm it returns the same ingress mode, readiness, degraded state, and per-bot ingress availability model as HTTP `/health`.
 3. Run `./kfc update` on a release-based install that is already current and confirm it reports the current version without prompting for installation.
-4. Run `./kfc update` when a newer latest stable release is available and confirm it prompts before staging the new release, refreshes the managed service after confirmation, and updates `~/.local/share/kfc/install-metadata.json`.
-5. Force a service refresh failure after the new app has been activated and confirm `./kfc update` reports that the update failed and the install was rolled back to the previous version.
-6. Run `./kfc rollback` when `app.previous` exists and confirm it prompts before swapping app directories and then reports the restored current version.
+4. Run `./kfc update` when a newer latest stable release is available and confirm it prompts before handoff, schedules a detached helper, eventually refreshes the managed service, and updates `~/.local/share/kfc/install-metadata.json`.
+5. Force a service refresh failure after the new app has been activated and confirm `./kfc update` first attempts automatic restoration of the previous version and reports that restored version when recovery succeeds.
+6. Run `./kfc rollback` when `app.previous` exists and confirm it prompts before handoff, schedules the detached helper, and then reports the restored current version.
 7. Run `./kfc rollback --yes` and confirm it skips confirmation but still blocks missing `app.previous` or unusable install metadata.
 8. Confirm `~/Library/LaunchAgents/com.kidsalfred.service.plist` exists after `./kfc service install --config /path/to/bot.toml`.
 9. Run `./kfc service restart` and confirm the managed main service restarts successfully.

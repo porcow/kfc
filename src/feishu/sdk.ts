@@ -4,10 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 
 import type {
-  BotAvailabilityHealth,
-  BotWebhookHealth,
   BotWebSocketHealth,
-  IngressMode,
   RunRecord,
   RunUpdateSink,
   ServiceEventType,
@@ -18,6 +15,7 @@ import type {
 } from '../domain.ts';
 import type { KidsAlfredService } from '../service.ts';
 import { buildRunStatusCard, buildServiceEventNotificationCard } from './cards.ts';
+import { buildAvailability, isIngressObservationStale } from '../health.ts';
 
 interface RequestHandler {
   (request: IncomingMessage, response: ServerResponse): void;
@@ -111,10 +109,6 @@ export function extractCardActionPayload(event: any): {
 
 export interface BotBridge {
   botId: string;
-  cardPath: string;
-  eventPath: string;
-  cardHandler: RequestHandler;
-  eventHandler: RequestHandler;
   startWebSocketClient(): Promise<void>;
   close(): Promise<void>;
   getWebSocketHealth(): BotWebSocketHealth;
@@ -155,7 +149,7 @@ type IngressAwareService = Pick<
 > &
   Partial<{
     claimIngressEvent(eventKey: string, eventType: string): boolean | Promise<boolean>;
-    observeWebhookEvent(eventType: string, now?: string): void;
+    observeWebSocketEvent(eventType: string, now?: string): void;
     logDuplicateIngress(entry: {
       actorId: string;
       eventType: 'im.message.receive_v1' | 'card.action.trigger';
@@ -174,8 +168,7 @@ type ServiceEventAwareService = KidsAlfredService &
     | 'getServiceEventState'
     | 'saveServiceEventState'
     | 'getServiceReconnectNotificationThresholdMs'
-    | 'getIngressMode'
-    | 'getWebhookHealth'
+    | 'getWebSocketObservationHealth'
     | 'getConfig'
     | 'getBotId'
   >;
@@ -213,7 +206,7 @@ function withWarning(health: BotWebSocketHealth): BotWebSocketHealth {
   if (health.consecutiveReconnectFailures >= RECONNECT_WARNING_THRESHOLD) {
     return {
       ...health,
-      warning: `WebSocket reconnect failures exceeded ${RECONNECT_WARNING_THRESHOLD}. Consider switching bot event delivery to ${health.fallbackEventPath}.`,
+      warning: `WebSocket reconnect failures exceeded ${RECONNECT_WARNING_THRESHOLD}. Confirm the long connection can recover normally.`,
     };
   }
   return {
@@ -410,75 +403,23 @@ function isConnectedState(state: BotWebSocketHealth['state']): boolean {
   return state === 'connected';
 }
 
-function buildAvailability(
-  ingressMode: IngressMode,
-  websocket: BotWebSocketHealth,
-  webhook: BotWebhookHealth,
-): BotAvailabilityHealth {
-  if (ingressMode === 'websocket-only') {
-    const ingressAvailable = websocket.state === 'connected';
-    return {
-      ingressAvailable,
-      activeIngress: ingressAvailable ? 'websocket' : 'unknown',
-      degraded: !ingressAvailable,
-      summary: ingressAvailable ? 'Available via WebSocket' : 'Unavailable',
-    };
-  }
-
-  if (websocket.state === 'connected') {
-    return {
-      ingressAvailable: true,
-      activeIngress: 'websocket',
-      degraded: false,
-      summary: 'Available via WebSocket',
-    };
-  }
-
-  if (!webhook.stale && webhook.lastEventReceivedAt) {
-    return {
-      ingressAvailable: true,
-      activeIngress: 'webhook',
-      degraded: true,
-      summary: `Available via webhook fallback while WebSocket is ${websocket.state}`,
-    };
-  }
-
-  return {
-    ingressAvailable: false,
-    activeIngress: 'unknown',
-    degraded: true,
-    summary: 'Unavailable',
-  };
-}
-
-function getIngressModeForService(service: Partial<ServiceEventAwareService>): IngressMode {
-  return service.getIngressMode?.() ?? 'websocket-only';
-}
-
-function getWebhookHealthForService(
+function getWebSocketHealthForService(
   service: Partial<ServiceEventAwareService>,
+  currentHealth: BotWebSocketHealth,
   now: string,
-): BotWebhookHealth {
-  const directHealth = service.getWebhookHealth?.(now);
-  if (directHealth) {
-    return directHealth;
-  }
-  const observation = (service as Partial<{
-    getWebhookObservation(): Partial<BotWebhookHealth>;
-  }>).getWebhookObservation?.();
-  if (observation) {
-    return {
-      enabled: observation.enabled ?? true,
-      configured: observation.configured ?? true,
-      lastEventReceivedAt: observation.lastEventReceivedAt,
-      lastEventType: observation.lastEventType,
-      stale: observation.stale ?? !observation.lastEventReceivedAt,
-    };
-  }
+): BotWebSocketHealth {
+  const observation = service.getWebSocketObservationHealth?.(now);
   return {
-    enabled: false,
-    configured: false,
-    stale: true,
+    ...currentHealth,
+    lastEventReceivedAt: observation?.lastEventReceivedAt ?? currentHealth.lastEventReceivedAt,
+    lastEventType: observation?.lastEventType ?? currentHealth.lastEventType,
+    stale:
+      observation?.stale ??
+      currentHealth.stale ??
+      isIngressObservationStale(
+        observation?.lastEventReceivedAt ?? currentHealth.lastEventReceivedAt,
+        now,
+      ),
   };
 }
 
@@ -519,11 +460,8 @@ export async function processServiceHeartbeat(
   now: string,
   currentHealth: BotWebSocketHealth,
 ): Promise<void> {
-  const availability = buildAvailability(
-    getIngressModeForService(service),
-    currentHealth,
-    getWebhookHealthForService(service, now),
-  );
+  const websocketHealth = getWebSocketHealthForService(service, currentHealth, now);
+  const availability = buildAvailability(websocketHealth);
   if (!availability.ingressAvailable) {
     return;
   }
@@ -531,7 +469,7 @@ export async function processServiceHeartbeat(
   const state = service.getServiceEventState();
   const previousHeartbeatSucceededAt = state?.lastHeartbeatSucceededAt;
   service.saveServiceEventState({
-    lastConnectedAt: currentHealth.state === 'connected' ? currentHealth.lastConnectedAt ?? now : undefined,
+    lastConnectedAt: websocketHealth.state === 'connected' ? websocketHealth.lastConnectedAt ?? now : undefined,
     lastHeartbeatSucceededAt: now,
   }, now);
 
@@ -550,7 +488,7 @@ export async function processServiceHeartbeat(
   });
   service.saveServiceEventState(
     {
-      lastConnectedAt: currentHealth.state === 'connected' ? currentHealth.lastConnectedAt ?? now : undefined,
+      lastConnectedAt: websocketHealth.state === 'connected' ? websocketHealth.lastConnectedAt ?? now : undefined,
       lastHeartbeatSucceededAt: now,
       lastReconnectedNotifiedAt: now,
     },
@@ -679,14 +617,10 @@ function buildCardActionIngressKey(service: Pick<KidsAlfredService, 'getBotId'>,
 export function createEventDispatcherHandlers(
   service: IngressAwareService,
   client: ReplyClient,
-  options: { source?: 'websocket' | 'webhook' } = {},
 ): Record<string, (data: any) => Promise<unknown>> {
-  const source = options.source ?? 'websocket';
   return {
     'im.message.receive_v1': async (data: any) => {
-      if (source === 'webhook') {
-        service.observeWebhookEvent?.('im.message.receive_v1');
-      }
+      service.observeWebSocketEvent?.('im.message.receive_v1');
       const actorId = extractActorId(data);
       const text = parseMessageText(data?.message?.content ?? '');
       const chatId = typeof data?.message?.chat_id === 'string' ? data.message.chat_id : '';
@@ -716,9 +650,7 @@ export function createEventDispatcherHandlers(
       }
     },
     'card.action.trigger': async (data: any) => {
-      if (source === 'webhook') {
-        service.observeWebhookEvent?.('card.action.trigger');
-      }
+      service.observeWebSocketEvent?.('card.action.trigger');
       const actorId = extractActorId(data);
       const action = extractCardActionPayload(data);
       const eventKey = buildCardActionIngressKey(service, data, actorId, action);
@@ -769,7 +701,6 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
   const webSocketHealth: BotWebSocketHealth = {
     state: 'disconnected',
     consecutiveReconnectFailures: 0,
-    fallbackEventPath: service.getConfig().server.eventPath,
   };
   let wsClient: any;
   let manuallyClosed = false;
@@ -870,52 +801,12 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
     ),
   );
   service.attachTaskResultDeliverySink(new FeishuTaskResultSink(client));
-  const websocketEventHandlers = createEventDispatcherHandlers(service, client, { source: 'websocket' });
-  const webhookEventHandlers = createEventDispatcherHandlers(service, client, { source: 'webhook' });
+  const websocketEventHandlers = createEventDispatcherHandlers(service, client);
 
   const eventDispatcher = new sdk.EventDispatcher({}).register(websocketEventHandlers);
 
-  const cardHandler = new sdk.CardActionHandler(
-    {
-      encryptKey: service.getConfig().feishu.encryptKey,
-      verificationToken: service.getConfig().feishu.verificationToken,
-    },
-    async (event: any) => {
-      const actorId = extractActorId(event);
-      const action = extractCardActionPayload(event);
-      const eventKey = buildCardActionIngressKey(service, event, actorId, action);
-      if (!(await service.claimIngressEvent(eventKey, 'card.action.trigger'))) {
-        await service.logDuplicateIngress({
-          actorId,
-          eventType: 'card.action.trigger',
-          commandType: action.type || 'unknown',
-          taskId: action.taskId,
-          runId: action.runId,
-          confirmationId: action.confirmationId,
-        });
-        return undefined;
-      }
-      const response = await service.handleCardAction(actorId, action);
-      return response.card;
-    },
-  );
-
-  const eventHandler = new sdk.EventDispatcher({
-    verificationToken: service.getConfig().feishu.verificationToken,
-    encryptKey: service.getConfig().feishu.encryptKey,
-  }).register(webhookEventHandlers);
-
-  const cardHttpHandler = sdk.adaptDefault(service.getConfig().server.cardPath, cardHandler);
-  const eventHttpHandler = sdk.adaptDefault(service.getConfig().server.eventPath, eventHandler, {
-    autoChallenge: true,
-  });
-
   return {
     botId: service.getBotId(),
-    cardPath: service.getConfig().server.cardPath,
-    eventPath: service.getConfig().server.eventPath,
-    cardHandler: cardHttpHandler,
-    eventHandler: eventHttpHandler,
     startWebSocketClient: async () => {
       if (wsClient) {
         return;

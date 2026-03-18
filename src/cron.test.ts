@@ -40,10 +40,6 @@ function createBotConfig(sqlitePath: string): BotConfig {
     botId: 'ops',
     workingDirectory: '/Users/example/.kfc',
     allowedUsers: ['operator-1'],
-    server: {
-      cardPath: '/bots/ops/webhook/card',
-      eventPath: '/bots/ops/webhook/event',
-    },
     storage: {
       sqlitePath,
     },

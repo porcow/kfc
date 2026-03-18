@@ -309,14 +309,15 @@ function formatHealthDetails(snapshot: AppHealthSnapshot): string {
           health?.websocket.nextReconnectAt
             ? `  - Next reconnect: \`${formatFeishuTimestamp(health.websocket.nextReconnectAt)}\``
             : '',
+          health?.websocket.lastEventReceivedAt
+            ? `  - WebSocket last event: \`${formatFeishuTimestamp(health.websocket.lastEventReceivedAt)}\``
+            : '',
+          health?.websocket.lastEventType
+            ? `  - WebSocket event type: \`${health.websocket.lastEventType}\``
+            : '',
           health?.websocket.consecutiveReconnectFailures !== undefined
             ? `  - Reconnect failures: **${health.websocket.consecutiveReconnectFailures}**`
             : '',
-          `  - Webhook fallback: **${health?.webhook.enabled ? 'enabled' : 'disabled'}**`,
-          health?.webhook.lastEventReceivedAt
-            ? `  - Webhook last event: \`${formatFeishuTimestamp(health.webhook.lastEventReceivedAt)}\``
-            : '',
-          health?.webhook.lastEventType ? `  - Webhook event type: \`${health.webhook.lastEventType}\`` : '',
           health?.websocket.warning ? `  - Warning: ${health.websocket.warning}` : '',
         ].filter(Boolean);
         return details.join('\n');
@@ -325,7 +326,6 @@ function formatHealthDetails(snapshot: AppHealthSnapshot): string {
   return [
     `Ready: **${snapshot.ready ? 'true' : 'false'}**`,
     `Degraded: **${snapshot.degraded ? 'true' : 'false'}**`,
-    `Ingress mode: **${snapshot.ingressMode}**`,
     `Loaded at: \`${formatFeishuTimestamp(snapshot.loadedAt)}\``,
     '',
     '**Bots**',
@@ -347,7 +347,7 @@ export function buildServiceEventNotificationCard(options: {
   host: string;
   loadedAt?: string;
   heartbeatGapMs?: number;
-  activeIngress?: 'websocket' | 'webhook' | 'unknown';
+  activeIngress?: 'websocket' | 'unknown';
 }): Record<string, unknown> {
   if (options.eventType === 'service_online') {
     const lines = [
@@ -370,7 +370,7 @@ export function buildServiceEventNotificationCard(options: {
           `Bot: **${options.botId}**`,
           `Reconnected at: \`${formatFeishuTimestamp(options.connectedAt)}\``,
           `Heartbeat gap: **${heartbeatGap}**`,
-          `Recovery ingress: **${options.activeIngress ?? 'unknown'}**`,
+          `Recovery ingress: **${options.activeIngress === 'websocket' ? 'websocket' : 'unknown'}**`,
           `Host: \`${options.host}\``,
         ].join('\n'),
       ),

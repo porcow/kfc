@@ -2,51 +2,48 @@ import type {
   AppHealthSnapshot,
   BotAvailabilityHealth,
   BotIngressHealth,
-  BotWebhookHealth,
   BotWebSocketHealth,
-  IngressMode,
 } from './domain.ts';
 
-const WEBHOOK_STALE_SUMMARY = 'Unavailable';
+const UNAVAILABLE_SUMMARY = 'Unavailable';
+export const INGRESS_OBSERVATION_WINDOW_MS = 5 * 60_000;
 
 export interface HealthSnapshotSource {
   getLoadedAt(): string;
-  getIngressMode(): IngressMode;
   listBotIds(): string[];
   getBotWebSocketHealth(): Record<string, BotWebSocketHealth>;
-  getBotWebhookHealth(): Record<string, BotWebhookHealth>;
 }
 
-function buildAvailability(
-  ingressMode: IngressMode,
-  websocket: BotWebSocketHealth,
-  webhook: BotWebhookHealth,
-): BotAvailabilityHealth {
-  if (ingressMode === 'websocket-only') {
-    const ingressAvailable = websocket.state === 'connected';
-    return {
-      ingressAvailable,
-      activeIngress: ingressAvailable ? 'websocket' : 'unknown',
-      degraded: !ingressAvailable,
-      summary: ingressAvailable ? 'Available via WebSocket' : WEBHOOK_STALE_SUMMARY,
-    };
-  }
+export function isIngressObservationStale(
+  lastEventReceivedAt: string | undefined,
+  now: string,
+): boolean {
+  return (
+    !lastEventReceivedAt ||
+    new Date(now).valueOf() - new Date(lastEventReceivedAt).valueOf() > INGRESS_OBSERVATION_WINDOW_MS
+  );
+}
 
-  if (websocket.state === 'connected') {
+export function buildAvailability(websocket: BotWebSocketHealth): BotAvailabilityHealth {
+  if (!websocket.stale && websocket.lastEventReceivedAt) {
     return {
       ingressAvailable: true,
       activeIngress: 'websocket',
-      degraded: false,
-      summary: 'Available via WebSocket',
+      degraded: websocket.state !== 'connected',
+      summary:
+        websocket.state === 'connected'
+          ? 'Available via WebSocket'
+          : `Available via WebSocket ingress while transport state is ${websocket.state}`,
     };
   }
 
-  if (!webhook.stale && webhook.lastEventReceivedAt) {
+  const ingressAvailable = websocket.state === 'connected';
+  if (ingressAvailable) {
     return {
-      ingressAvailable: true,
-      activeIngress: 'webhook',
-      degraded: true,
-      summary: `Available via webhook fallback while WebSocket is ${websocket.state}`,
+      ingressAvailable,
+      activeIngress: 'websocket',
+      degraded: false,
+      summary: 'Available via WebSocket',
     };
   }
 
@@ -54,37 +51,38 @@ function buildAvailability(
     ingressAvailable: false,
     activeIngress: 'unknown',
     degraded: true,
-    summary: WEBHOOK_STALE_SUMMARY,
+    summary: UNAVAILABLE_SUMMARY,
   };
 }
 
 export function buildHealthSnapshot(source: HealthSnapshotSource): AppHealthSnapshot {
-  const ingressMode = source.getIngressMode();
   const websocket = source.getBotWebSocketHealth();
-  const webhook = source.getBotWebhookHealth();
+  const now = new Date().toISOString();
   const botHealth: Record<string, BotIngressHealth> = {};
   for (const botId of source.listBotIds()) {
     const socketHealth = websocket[botId] ?? {
       state: 'disconnected',
       consecutiveReconnectFailures: 0,
-    };
-    const webhookHealth = webhook[botId] ?? {
-      enabled: ingressMode === 'websocket-with-webhook-fallback',
-      configured: false,
       stale: true,
     };
+    const normalizedSocketHealth = {
+      ...socketHealth,
+      stale:
+        socketHealth.stale ??
+        isIngressObservationStale(socketHealth.lastEventReceivedAt, now),
+    };
     botHealth[botId] = {
-      websocket: socketHealth,
-      webhook: webhookHealth,
-      availability: buildAvailability(ingressMode, socketHealth, webhookHealth),
+      websocket: normalizedSocketHealth,
+      availability: buildAvailability(normalizedSocketHealth),
     };
   }
   return {
     ok: true,
     loadedAt: source.getLoadedAt(),
     bots: source.listBotIds(),
-    ingressMode,
-    websocket,
+    websocket: Object.fromEntries(
+      Object.entries(botHealth).map(([botId, health]) => [botId, health.websocket]),
+    ),
     botHealth,
     degraded: Object.values(botHealth).some((health) => health.availability.degraded),
     ready: Object.values(botHealth).every((health) => health.availability.ingressAvailable),

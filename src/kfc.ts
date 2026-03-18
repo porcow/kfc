@@ -19,7 +19,12 @@ import {
   isServiceInstalled,
   SERVICE_LABEL,
 } from './service-manager.ts';
-import { inspectRollbackState, inspectUpdateState, performRollback, performSelfUpdate } from './update.ts';
+import { inspectRollbackState, inspectUpdateState } from './update.ts';
+import {
+  cliRollbackViaPreparedHandoff,
+  cliUpdateViaPreparedHandoff,
+  runDetachedServiceRefreshOperation,
+} from './service-refresh.ts';
 import type {
   AppHealthSnapshot,
   BotConfig,
@@ -453,20 +458,14 @@ function createDefaultDeps(): KfcCliDeps {
     healthReader: async () => await readServiceHealth(),
     updateInspector: async () => await inspectUpdateState(),
     updatePerformer: async (inspection) =>
-      await performSelfUpdate(inspection, {
+      await cliUpdateViaPreparedHandoff(inspection, {
         configPath: await resolveUpdateConfigPath(),
-        serviceInstaller: async (configPath) => {
-          await serviceManager.install(configPath);
-        },
       }),
     confirmUpdate: async (prompt) => await confirmInteractive(prompt),
     rollbackInspector: async () => await inspectRollbackState(),
     rollbackPerformer: async (inspection) =>
-      await performRollback(inspection, {
+      await cliRollbackViaPreparedHandoff(inspection, {
         configPath: await resolveUpdateConfigPath(),
-        serviceInstaller: async (configPath) => {
-          await serviceManager.install(configPath);
-        },
       }),
     confirmRollback: async (prompt) => await confirmInteractive(prompt),
     confirmFullUninstall: async (prompt) => await confirmInteractive(prompt),
@@ -612,6 +611,9 @@ export async function runKfcCli(argv: string[], deps: KfcCliDeps = createDefault
           parameters,
           flags['--actor'] ?? 'local-admin',
           flags['--run-id'] ?? `kfc_${task.id}`,
+          {
+            botId: flags['--bot-id'],
+          },
         );
         deps.stdout.write(`${JSON.stringify(result)}\n`);
         return 0;
@@ -623,6 +625,17 @@ export async function runKfcCli(argv: string[], deps: KfcCliDeps = createDefault
         throw new Error('Usage: kfc exec --bot BOT_ID --task TASK_ID');
       }
       const result = await deps.taskExecutor(botId, taskId);
+      deps.stdout.write(`${result.summary}\n`);
+      return 0;
+    }
+
+    if (command === 'internal-run-self-refresh') {
+      const flags = parseFlags(rest);
+      const operationId = flags['--operation-id'];
+      if (!operationId) {
+        throw new Error('Usage: kfc internal-run-self-refresh --operation-id OPERATION_ID');
+      }
+      const result = await runDetachedServiceRefreshOperation(operationId);
       deps.stdout.write(`${result.summary}\n`);
       return 0;
     }

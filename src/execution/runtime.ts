@@ -97,6 +97,7 @@ async function runBuiltinToolViaKfc(
   task: Extract<TaskDefinition, { runnerKind: 'builtin-tool' }>,
   run: RunRecord,
   signal: AbortSignal,
+  botId?: string,
 ): Promise<TaskResult> {
   const runnerPath = resolveBunExecutablePath();
   return await new Promise<TaskResult>((resolvePromise, rejectPromise) => {
@@ -113,6 +114,7 @@ async function runBuiltinToolViaKfc(
         run.actorId,
         '--run-id',
         run.runId,
+        ...(botId ? ['--bot-id', botId] : []),
       ],
       {
         shell: false,
@@ -185,17 +187,20 @@ export class TaskRuntime {
   private readonly tools: Map<string, TaskTool>;
   private readonly updates: RunUpdateSink;
   private readonly resultDeliveries: TaskResultDeliverySink;
+  private readonly botId?: string;
 
   constructor(
     repository: RunRepository,
     tools: Map<string, TaskTool>,
     updates: RunUpdateSink,
     resultDeliveries: TaskResultDeliverySink,
+    botId?: string,
   ) {
     this.repository = repository;
     this.tools = tools;
     this.updates = updates;
     this.resultDeliveries = resultDeliveries;
+    this.botId = botId;
   }
 
   async start(run: RunRecord, task: TaskDefinition): Promise<void> {
@@ -232,8 +237,18 @@ export class TaskRuntime {
     try {
       const result =
         task.runnerKind === 'builtin-tool'
-          ? await runBuiltinToolViaKfc(task, run, abortController.signal)
+          ? await runBuiltinToolViaKfc(task, run, abortController.signal, this.botId)
           : await runExternalCommand(task, run.parameters, abortController.signal);
+
+      if (result.data?.serviceRefreshHandoff === true) {
+        const handedOff = this.repository.updateRun(run.runId, {
+          state: 'running',
+          statusSummary: result.summary,
+          resultJson: JSON.stringify(result),
+        });
+        await this.updates.sendRunUpdate(handedOff);
+        return;
+      }
 
       await this.resultDeliveries.sendTaskResult(runningRun, task, result);
       const completed = this.repository.updateRun(run.runId, {

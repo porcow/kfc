@@ -1,10 +1,7 @@
 import type {
   AppConfig,
-  BotWebhookHealth,
   BotWebSocketHealth,
-  IngressMode,
   ReloadResult,
-  RouteKind,
   RunUpdateSink,
 } from './domain.ts';
 import { loadConfig } from './config/schema.ts';
@@ -13,6 +10,7 @@ import { buildHealthSnapshot } from './health.ts';
 import { KidsAlfredService, MemoryRunUpdateSink } from './service.ts';
 import { LaunchdCronController, type CronController } from './cron.ts';
 import { RunRepository } from './persistence/run-repository.ts';
+import { reconcilePendingServiceRefreshOperations } from './service-refresh.ts';
 
 interface BotRuntime {
   service: KidsAlfredService;
@@ -63,10 +61,6 @@ export class BotManager {
     return this.config.loadedAt;
   }
 
-  getIngressMode(): IngressMode {
-    return this.config.server.ingressMode;
-  }
-
   listBotIds(): string[] {
     return [...this.runtimes.keys()].sort();
   }
@@ -79,46 +73,14 @@ export class BotManager {
     return Object.fromEntries(
       [...this.runtimes.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([botId, runtime]) => [botId, runtime.bridge.getWebSocketHealth()]),
+        .map(([botId, runtime]) => [
+          botId,
+          {
+            ...runtime.bridge.getWebSocketHealth(),
+            ...runtime.service.getWebSocketObservationHealth(),
+          },
+        ]),
     );
-  }
-
-  getBotWebhookHealth(): Record<string, BotWebhookHealth> {
-    return Object.fromEntries(
-      [...this.runtimes.entries()]
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([botId, runtime]) => [botId, runtime.service.getWebhookHealth()]),
-    );
-  }
-
-  resolveRoute(path: string): { botId: string; kind: RouteKind } | undefined {
-    for (const [botId, runtime] of this.runtimes.entries()) {
-      const botConfig = runtime.service.getConfig();
-      if (path === botConfig.server.cardPath) {
-        return { botId, kind: 'card' };
-      }
-      if (path === botConfig.server.eventPath) {
-        return { botId, kind: 'event' };
-      }
-    }
-    return undefined;
-  }
-
-  getRouteHandler(
-    path: string,
-  ): { botId: string; kind: RouteKind; handler: BotBridge['cardHandler'] | BotBridge['eventHandler'] } | undefined {
-    const route = this.resolveRoute(path);
-    if (!route) {
-      return undefined;
-    }
-    const runtime = this.runtimes.get(route.botId);
-    if (!runtime) {
-      return undefined;
-    }
-    return {
-      ...route,
-      handler: route.kind === 'card' ? runtime.bridge.cardHandler : runtime.bridge.eventHandler,
-    };
   }
 
   async startWebSockets(): Promise<void> {
@@ -145,6 +107,11 @@ export class BotManager {
         this.runtimes.set(botId, runtime);
       }
       this.attachHealthProviders();
+      await reconcilePendingServiceRefreshOperations(
+        new Map(
+          [...this.runtimes.entries()].map(([botId, runtime]) => [botId, runtime.service]),
+        ),
+      );
 
       await Promise.allSettled(
         [...previousRuntimes.values()].map(async (runtime) => {
@@ -207,6 +174,11 @@ export class BotManager {
       this.runtimes.set(botId, runtime);
     }
     this.attachHealthProviders();
+    await reconcilePendingServiceRefreshOperations(
+      new Map(
+        [...this.runtimes.entries()].map(([botId, runtime]) => [botId, runtime.service]),
+      ),
+    );
   }
 
   private async buildRuntimes(config: AppConfig): Promise<Map<string, BotRuntime>> {
@@ -222,7 +194,6 @@ export class BotManager {
         repository,
         undefined,
         config.server.serviceReconnectNotificationThresholdMs,
-        config.server.ingressMode,
       );
       const bridge = await this.bridgeFactory(service);
       service.reconcileServiceEventSubscriptions();

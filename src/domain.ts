@@ -2,9 +2,7 @@ export type RunnerKind = 'builtin-tool' | 'external-command';
 export type ExecutionMode = 'oneshot' | 'cronjob';
 export type ParameterType = 'string' | 'number' | 'boolean';
 export type ToolConfigValue = string | number | boolean;
-export type RouteKind = 'card' | 'event';
 export type WebSocketState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
-export type IngressMode = 'websocket-only' | 'websocket-with-webhook-fallback';
 export type RunState =
   | 'pending_confirmation'
   | 'queued'
@@ -14,6 +12,16 @@ export type RunState =
   | 'timed_out'
   | 'cancelled'
   | 'rejected';
+
+export type ServiceRefreshOperationKind = 'update' | 'rollback';
+export type ServiceRefreshOperationState =
+  | 'prepared'
+  | 'helper_bootstrapped'
+  | 'refreshing'
+  | 'succeeded'
+  | 'restored_previous_version'
+  | 'manual_recovery_required'
+  | 'failed';
 
 export interface ParameterDefinition {
   type: ParameterType;
@@ -56,7 +64,6 @@ export interface GlobalServerConfig {
   port: number;
   healthPath: string;
   serviceReconnectNotificationThresholdMs: number;
-  ingressMode: IngressMode;
 }
 
 export interface BotConfig {
@@ -64,10 +71,6 @@ export interface BotConfig {
   sourcePath?: string;
   workingDirectory: string;
   allowedUsers: string[];
-  server: {
-    cardPath: string;
-    eventPath: string;
-  };
   storage: {
     sqlitePath: string;
   };
@@ -123,6 +126,24 @@ export interface RunRecord {
   resultJson?: string;
   originChatId?: string;
   cancellable: boolean;
+}
+
+export interface ServiceRefreshOperationRecord {
+  operationId: string;
+  kind: ServiceRefreshOperationKind;
+  state: ServiceRefreshOperationState;
+  configPath: string;
+  payloadJson: string;
+  runId?: string;
+  botId?: string;
+  sqlitePath?: string;
+  helperLabel?: string;
+  helperPlistPath?: string;
+  summary?: string;
+  notificationPending: boolean;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt?: string;
 }
 
 export interface TaskResult {
@@ -262,28 +283,21 @@ export interface BotWebSocketHealth {
   nextReconnectAt?: string;
   lastError?: string;
   consecutiveReconnectFailures: number;
-  fallbackEventPath?: string;
-  warning?: string;
-}
-
-export interface BotWebhookHealth {
-  enabled: boolean;
-  configured: boolean;
   lastEventReceivedAt?: string;
   lastEventType?: string;
-  stale: boolean;
+  stale?: boolean;
+  warning?: string;
 }
 
 export interface BotAvailabilityHealth {
   ingressAvailable: boolean;
-  activeIngress: 'websocket' | 'webhook' | 'unknown';
+  activeIngress: 'websocket' | 'unknown';
   degraded: boolean;
   summary: string;
 }
 
 export interface BotIngressHealth {
   websocket: BotWebSocketHealth;
-  webhook: BotWebhookHealth;
   availability: BotAvailabilityHealth;
 }
 
@@ -291,7 +305,6 @@ export interface AppHealthSnapshot {
   ok: true;
   loadedAt: string;
   bots: string[];
-  ingressMode: IngressMode;
   websocket: Record<string, BotWebSocketHealth>;
   botHealth: Record<string, BotIngressHealth>;
   degraded: boolean;

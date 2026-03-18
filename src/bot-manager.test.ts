@@ -100,14 +100,9 @@ function createBridgeFactory(stateByBotId: Map<string, Record<string, unknown>[]
     const health = {
       state: 'disconnected',
       consecutiveReconnectFailures: 0,
-      fallbackEventPath: service.getConfig().server.eventPath,
     };
     const bridge = {
       botId,
-      cardPath: service.getConfig().server.cardPath,
-      eventPath: service.getConfig().server.eventPath,
-      cardHandler() {},
-      eventHandler() {},
       async startWebSocketClient() {
         bucket.push({ action: 'start' });
         health.state = 'connected';
@@ -138,26 +133,6 @@ test('manager loads multiple bots and keeps task catalogs isolated', async () =>
   assert.ok(JSON.stringify(manager.getBot('alpha')!.listTasks('operator-a').card).includes('echo'));
   assert.ok(JSON.stringify(manager.getBot('beta')!.listTasks('operator-b').card).includes('say'));
   assert.throws(() => manager.getBot('alpha')!.listTasks('operator-b'), /not authorized/);
-
-  await manager.close();
-});
-
-test('manager resolves bot-scoped routes and rejects unknown paths', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-routes-'));
-  const configPath = join(directory, 'bots.toml');
-  await writeFile(configPath, multiBotConfigText(directory));
-
-  const manager = await BotManager.create(configPath);
-
-  assert.deepEqual(manager.resolveRoute('/bots/alpha/webhook/card'), {
-    botId: 'alpha',
-    kind: 'card',
-  });
-  assert.deepEqual(manager.resolveRoute('/bots/beta/webhook/event'), {
-    botId: 'beta',
-    kind: 'event',
-  });
-  assert.equal(manager.resolveRoute('/bots/gamma/webhook/card'), undefined);
 
   await manager.close();
 });
@@ -420,22 +395,17 @@ test('health endpoint distinguishes degraded websocket ingress and surfaces warn
   const manager = await BotManager.create(configPath, {
     bridgeFactory: async (service: any) => ({
       botId: service.getBotId(),
-      cardPath: service.getConfig().server.cardPath,
-      eventPath: service.getConfig().server.eventPath,
-      cardHandler() {},
-      eventHandler() {},
       async startWebSocketClient() {},
       async close() {},
       getWebSocketHealth() {
         return {
           state: service.getBotId() === 'alpha' ? 'reconnecting' : 'connected',
           consecutiveReconnectFailures: service.getBotId() === 'alpha' ? 4 : 0,
-          fallbackEventPath: service.getConfig().server.eventPath,
           nextReconnectAt:
             service.getBotId() === 'alpha' ? '2026-03-12T12:30:00.000Z' : undefined,
           warning:
             service.getBotId() === 'alpha'
-              ? `WebSocket reconnect failures exceeded 3. Consider switching bot event delivery to ${service.getConfig().server.eventPath}.`
+              ? 'WebSocket reconnect failures exceeded 3. Confirm the long connection can recover normally.'
               : undefined,
         };
       },
@@ -469,7 +439,7 @@ test('health endpoint distinguishes degraded websocket ingress and surfaces warn
   const payload = JSON.parse(body) as Record<string, any>;
   assert.equal(payload.ready, false);
   assert.equal(payload.websocket.alpha.state, 'reconnecting');
-  assert.match(payload.websocket.alpha.warning, /webhook\/event/u);
+  assert.match(payload.websocket.alpha.warning, /long connection/u);
   assert.equal(payload.websocket.beta.state, 'connected');
 
   await manager.close();

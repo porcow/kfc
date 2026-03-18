@@ -1,6 +1,5 @@
 import type {
   AppHealthSnapshot,
-  BotWebhookHealth,
   BotConfig,
   CardResponse,
   EventLogEntry,
@@ -10,7 +9,6 @@ import type {
   RunRecord,
   ServiceEventStateRecord,
   ServiceEventType,
-  IngressMode,
   TaskResult,
   TaskResultDeliverySink,
   RunUpdateSink,
@@ -29,6 +27,7 @@ import {
   buildRunStatusCard,
   buildTaskListCard,
 } from './feishu/cards.ts';
+import { isIngressObservationStale } from './health.ts';
 import { summarizeParameters, validateParameters } from './config/schema.ts';
 import { createConfirmationId, createRunId } from './utils/ids.ts';
 import { RunRepository } from './persistence/run-repository.ts';
@@ -202,8 +201,7 @@ export class KidsAlfredService {
   private readonly cronController: CronController;
   private healthSnapshotProvider?: () => AppHealthSnapshot;
   private readonly serviceReconnectNotificationThresholdMs: number;
-  private readonly ingressMode: IngressMode;
-  private webhookObservation?: { lastEventReceivedAt: string; lastEventType: string };
+  private websocketObservation?: { lastEventReceivedAt: string; lastEventType: string };
 
   constructor(
     config: BotConfig,
@@ -214,7 +212,6 @@ export class KidsAlfredService {
     repository?: RunRepository,
     builtinTools?: Map<string, TaskTool>,
     serviceReconnectNotificationThresholdMs = 3600000,
-    ingressMode: IngressMode = 'websocket-only',
   ) {
     this.botId = config.botId;
     this.updates = new MultiRunUpdateSink(updates);
@@ -228,11 +225,11 @@ export class KidsAlfredService {
       builtinTools ?? createBuiltinToolRegistry(),
       this.updates,
       this.resultDeliveries,
+      this.botId,
     );
     this.cronController =
       cronController ?? new MemoryCronController(config.botId, config.tasks, this.repository);
     this.serviceReconnectNotificationThresholdMs = serviceReconnectNotificationThresholdMs;
-    this.ingressMode = ingressMode;
     this.repository.reconcileInterruptedRuns();
   }
 
@@ -248,30 +245,24 @@ export class KidsAlfredService {
     return this.serviceReconnectNotificationThresholdMs;
   }
 
-  getIngressMode(): IngressMode {
-    return this.ingressMode;
-  }
-
   setHealthSnapshotProvider(provider: () => AppHealthSnapshot): void {
     this.healthSnapshotProvider = provider;
   }
 
-  getWebhookHealth(now: string = new Date().toISOString()): BotWebhookHealth {
-    const lastEventReceivedAt = this.webhookObservation?.lastEventReceivedAt;
-    const stale =
-      !lastEventReceivedAt ||
-      new Date(now).valueOf() - new Date(lastEventReceivedAt).valueOf() > 5 * 60_000;
+  getWebSocketObservationHealth(now: string = new Date().toISOString()): Pick<
+    BotWebSocketHealth,
+    'lastEventReceivedAt' | 'lastEventType' | 'stale'
+  > {
+    const lastEventReceivedAt = this.websocketObservation?.lastEventReceivedAt;
     return {
-      enabled: this.ingressMode === 'websocket-with-webhook-fallback',
-      configured: Boolean(this.config.server.eventPath),
       lastEventReceivedAt,
-      lastEventType: this.webhookObservation?.lastEventType,
-      stale,
+      lastEventType: this.websocketObservation?.lastEventType,
+      stale: isIngressObservationStale(lastEventReceivedAt, now),
     };
   }
 
-  observeWebhookEvent(eventType: string, now: string = new Date().toISOString()): void {
-    this.webhookObservation = {
+  observeWebSocketEvent(eventType: string, now: string = new Date().toISOString()): void {
+    this.websocketObservation = {
       lastEventReceivedAt: now,
       lastEventType: eventType,
     };
@@ -302,6 +293,10 @@ export class KidsAlfredService {
 
   attachTaskResultDeliverySink(sink: TaskResultDeliverySink): void {
     this.resultDeliveries.addSink(sink);
+  }
+
+  async publishRunUpdate(run: RunRecord): Promise<void> {
+    await this.updates.sendRunUpdate(run);
   }
 
   isAuthorized(actorId: string): boolean {

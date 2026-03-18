@@ -1,19 +1,12 @@
 [server]
 port = 3000
 health_path = "/health"
-# ingress_mode = "websocket-only"
-# Set to "websocket-with-webhook-fallback" if operators want health and reconnect
-# evaluation to treat recent webhook-delivered bot traffic as degraded fallback availability.
 # Minimum successful-heartbeat gap before sending service_reconnected notifications.
 # Unit: ms
 service_reconnect_notification_threshold_ms = 3600000
 
 [bots.ops]
 allowed_users = ["ou_ops_operator", "ou_ops_backup"]
-
-[bots.ops.server]
-card_path = "/bots/ops/webhook/card"
-event_path = "/bots/ops/webhook/event"
 
 [bots.ops.feishu]
 app_id = "cli_ops_example"

@@ -6,7 +6,6 @@ import { buildHealthSnapshot } from './health.ts';
 test('buildHealthSnapshot returns the canonical health payload shape', () => {
   const snapshot = buildHealthSnapshot({
     getLoadedAt: () => '2026-03-14T08:00:00.000Z',
-    getIngressMode: () => 'websocket-with-webhook-fallback',
     listBotIds: () => ['alpha', 'beta'],
     getBotWebSocketHealth: () => ({
       alpha: {
@@ -19,37 +18,24 @@ test('buildHealthSnapshot returns the canonical health payload shape', () => {
         nextReconnectAt: '2026-03-14T08:05:00.000Z',
       },
     }),
-    getBotWebhookHealth: () => ({
-      alpha: {
-        enabled: true,
-        configured: true,
-        stale: false,
-      },
-      beta: {
-        enabled: true,
-        configured: true,
-        lastEventReceivedAt: '2026-03-14T08:04:30.000Z',
-        lastEventType: 'im.message.receive_v1',
-        stale: false,
-      },
-    }),
   });
 
   assert.deepEqual(snapshot, {
     ok: true,
     loadedAt: '2026-03-14T08:00:00.000Z',
     bots: ['alpha', 'beta'],
-    ingressMode: 'websocket-with-webhook-fallback',
     degraded: true,
     websocket: {
       alpha: {
         state: 'connected',
         consecutiveReconnectFailures: 0,
+        stale: true,
       },
       beta: {
         state: 'reconnecting',
         consecutiveReconnectFailures: 2,
         nextReconnectAt: '2026-03-14T08:05:00.000Z',
+        stale: true,
       },
     },
     botHealth: {
@@ -57,11 +43,7 @@ test('buildHealthSnapshot returns the canonical health payload shape', () => {
         websocket: {
           state: 'connected',
           consecutiveReconnectFailures: 0,
-        },
-        webhook: {
-          enabled: true,
-          configured: true,
-          stale: false,
+          stale: true,
         },
         availability: {
           ingressAvailable: true,
@@ -75,22 +57,41 @@ test('buildHealthSnapshot returns the canonical health payload shape', () => {
           state: 'reconnecting',
           consecutiveReconnectFailures: 2,
           nextReconnectAt: '2026-03-14T08:05:00.000Z',
-        },
-        webhook: {
-          enabled: true,
-          configured: true,
-          lastEventReceivedAt: '2026-03-14T08:04:30.000Z',
-          lastEventType: 'im.message.receive_v1',
-          stale: false,
+          stale: true,
         },
         availability: {
-          ingressAvailable: true,
-          activeIngress: 'webhook',
+          ingressAvailable: false,
+          activeIngress: 'unknown',
           degraded: true,
-          summary: 'Available via webhook fallback while WebSocket is reconnecting',
+          summary: 'Unavailable',
         },
       },
     },
-    ready: true,
+    ready: false,
+  });
+});
+
+test('buildHealthSnapshot treats recent websocket ingress as degraded availability in websocket-only mode', () => {
+  const snapshot = buildHealthSnapshot({
+    getLoadedAt: () => '2026-03-17T09:40:00.000Z',
+    listBotIds: () => ['alpha'],
+    getBotWebSocketHealth: () => ({
+      alpha: {
+        state: 'reconnecting',
+        consecutiveReconnectFailures: 1,
+        lastEventReceivedAt: '2026-03-17T09:39:30.000Z',
+        lastEventType: 'im.message.receive_v1',
+        stale: false,
+      },
+    }),
+  });
+
+  assert.equal(snapshot.ready, true);
+  assert.equal(snapshot.degraded, true);
+  assert.deepEqual(snapshot.botHealth.alpha.availability, {
+    ingressAvailable: true,
+    activeIngress: 'websocket',
+    degraded: true,
+    summary: 'Available via WebSocket ingress while transport state is reconnecting',
   });
 });

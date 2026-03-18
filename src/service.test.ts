@@ -17,10 +17,6 @@ function createBotConfig(botId: string, databasePath: string): BotConfig {
     botId,
     workingDirectory: '/Users/example/.kfc',
     allowedUsers: ['operator-1'],
-    server: {
-      cardPath: `/bots/${botId}/webhook/card`,
-      eventPath: `/bots/${botId}/webhook/event`,
-    },
     storage: {
       sqlitePath: databasePath,
     },
@@ -441,18 +437,12 @@ test('service returns health from the shared snapshot for authorized users', asy
     ok: true,
     loadedAt: '2026-03-14T08:00:00.000Z',
     bots: ['alpha', 'beta'],
-    ingressMode: 'websocket-with-webhook-fallback',
     degraded: true,
     botHealth: {
       alpha: {
         websocket: {
           state: 'connected',
           consecutiveReconnectFailures: 0,
-        },
-        webhook: {
-          enabled: true,
-          configured: true,
-          stale: false,
         },
         availability: {
           ingressAvailable: true,
@@ -466,19 +456,14 @@ test('service returns health from the shared snapshot for authorized users', asy
           state: 'reconnecting',
           consecutiveReconnectFailures: 2,
           nextReconnectAt: '2026-03-14T08:10:00.000Z',
-        },
-        webhook: {
-          enabled: true,
-          configured: true,
-          lastEventReceivedAt: '2026-03-14T08:09:30.000Z',
+          lastEventReceivedAt: '2026-03-14T08:09:40.000Z',
           lastEventType: 'im.message.receive_v1',
-          stale: false,
         },
         availability: {
           ingressAvailable: true,
-          activeIngress: 'webhook',
+          activeIngress: 'websocket',
           degraded: true,
-          summary: 'Available via webhook fallback while WebSocket is reconnecting',
+          summary: 'Available via WebSocket ingress while transport state is reconnecting',
         },
       },
     },
@@ -491,19 +476,18 @@ test('service returns health from the shared snapshot for authorized users', asy
   assert.equal(health.type, 'card');
   assert.ok(healthJson.includes('Service health'));
   assert.ok(healthJson.includes('Ready: **true**'));
-  assert.ok(healthJson.includes('Ingress mode: **websocket-with-webhook-fallback**'));
   assert.ok(healthJson.includes('Available: **true**'));
-  assert.ok(healthJson.includes('Active ingress: **webhook**'));
+  assert.ok(healthJson.includes('Active ingress: **websocket**'));
   assert.ok(healthJson.includes('Degraded: **true**'));
   assert.ok(healthJson.includes('alpha'));
   assert.ok(healthJson.includes('beta'));
   assert.ok(healthJson.includes('reconnecting'));
   assert.ok(healthJson.includes(formatFeishuTimestamp('2026-03-14T08:00:00.000Z')));
   assert.ok(healthJson.includes(formatFeishuTimestamp('2026-03-14T08:10:00.000Z')));
-  assert.ok(healthJson.includes(formatFeishuTimestamp('2026-03-14T08:09:30.000Z')));
+  assert.ok(healthJson.includes(formatFeishuTimestamp('2026-03-14T08:09:40.000Z')));
   assert.ok(!healthJson.includes('2026-03-14T08:00:00.000Z'));
   assert.ok(!healthJson.includes('2026-03-14T08:10:00.000Z'));
-  assert.ok(!healthJson.includes('2026-03-14T08:09:30.000Z'));
+  assert.ok(!healthJson.includes('2026-03-14T08:09:40.000Z'));
 
   await service.close();
 });

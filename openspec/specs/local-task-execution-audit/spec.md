@@ -2,43 +2,41 @@
 Define the local execution, persistence, audit, lifecycle, and service-management behavior that must remain durable and operator-auditable across runs and restarts.
 ## Requirements
 ### Requirement: Bot WebSocket health and effective ingress availability are observable
-The system SHALL expose bot-scoped ingress health so operators can distinguish process availability, primary WebSocket transport health, webhook fallback observations, and effective bot serviceability.
+The system SHALL expose bot-scoped ingress health so operators can distinguish process availability, primary WebSocket transport health, recent WebSocket ingress observations, and effective bot serviceability.
 
-#### Scenario: Health endpoint reports strict WebSocket readiness
-- **WHEN** the service ingress mode is `websocket-only`
-- **THEN** the health or diagnostic surface reports a bot as ready only when its WebSocket transport is connected
-- **AND** webhook observations do not make that bot ready under this mode
+#### Scenario: Health endpoint reports WebSocket-based readiness
+- **WHEN** the running service publishes health data for a bot
+- **THEN** the health or diagnostic surface reports that bot as ready only when current serviceability can be proven through long-connection WebSocket transport or recent WebSocket-delivered ingress observation
+- **AND** it does not reference webhook fallback availability because webhook event delivery is no longer supported
 
-#### Scenario: Health endpoint reports degraded-but-available fallback state
-- **WHEN** the service ingress mode is `websocket-with-webhook-fallback`
-- **AND** a bot's WebSocket transport is reconnecting or disconnected
-- **AND** recent webhook events have been observed for that bot inside the fallback recency window
+#### Scenario: Health endpoint reports degraded-but-available WebSocket ingress
+- **WHEN** a bot's WebSocket transport is reconnecting or disconnected
+- **AND** recent WebSocket-delivered events have been observed for that bot inside the shared recency window
 - **THEN** the health or diagnostic surface reports that bot as available
 - **AND** it marks the bot as degraded
-- **AND** it identifies webhook as the active ingress transport for that bot
+- **AND** it identifies WebSocket as the active ingress transport for that bot
 
-#### Scenario: Health endpoint reports unavailable bot when both ingress signals are absent
-- **WHEN** the service ingress mode is `websocket-with-webhook-fallback`
-- **AND** a bot's WebSocket transport is not connected
-- **AND** no recent webhook events have been observed for that bot inside the fallback recency window
+#### Scenario: Health endpoint reports unavailable bot when WebSocket evidence is absent
+- **WHEN** a bot's WebSocket transport is not connected
+- **AND** no recent WebSocket ingress observations exist for that bot inside the shared recency window
 - **THEN** the health or diagnostic surface reports that bot as unavailable
-- **AND** it does not treat stale webhook history as proof of current serviceability
+- **AND** it does not reference webhook history because webhook ingress is unsupported
 
 #### Scenario: Health is available through HTTP, CLI, and Feishu command surfaces
 - **WHEN** the running service publishes health data
-- **THEN** HTTP `/health`, `kfc health`, and the authorized Feishu `/server health` command all expose the same canonical ingress mode and per-bot availability facts
+- **THEN** HTTP `/health`, `kfc health`, and the authorized Feishu `/server health` command all expose the same canonical per-bot availability facts
 - **AND** HTTP and CLI expose the full canonical JSON model
 - **AND** Feishu exposes a summarized view derived from that same canonical model rather than a separate health implementation
 
-#### Scenario: Reconnect notifications use the same effective availability standard as health
+#### Scenario: Reconnect notifications use the same WebSocket-only availability standard as health
 - **WHEN** the service evaluates whether a bot has recovered after a prolonged absence of successful ingress checks
-- **THEN** it uses the same ingress-mode-aware `ingressAvailable` predicate that drives health readiness and bot availability
-- **AND** it does not maintain a second reconnect-only health definition that can disagree with the canonical health model
+- **THEN** it uses the same WebSocket-ingress-aware `ingressAvailable` predicate that drives health readiness and bot availability
+- **AND** it does not maintain webhook-based recovery semantics
 
-#### Scenario: Webhook fallback observations remain visible for diagnostics
-- **WHEN** the service observes webhook-delivered Feishu events for a bot
-- **THEN** it records the latest webhook event timestamp and type for that bot
-- **AND** the canonical health output exposes those observations so operators can correlate fallback activity with transport degradation
+#### Scenario: WebSocket ingress observations remain visible for diagnostics
+- **WHEN** the service observes WebSocket-delivered Feishu events for a bot
+- **THEN** it records the latest WebSocket event timestamp and type for that bot
+- **AND** the canonical health output exposes those observations so operators can correlate real ingress activity with degraded transport state
 
 ### Requirement: The `sc` oneshot task captures the current screen and returns it through Feishu
 The system SHALL support a configured oneshot task `sc`, backed by the builtin-tool `screencapture`, that captures the current macOS screen, stores the image temporarily on disk, sends it back through the Feishu SDK to the originating chat, and removes the temporary file after successful delivery.
@@ -256,6 +254,80 @@ The system SHALL persist each run with the initiating user, task identifier, par
 - **WHEN** the system completes a successful self-update
 - **THEN** it refreshes the managed service using the same service-install semantics as `kfc service install`
 - **AND** it does not rely on a lighter-weight restart-only path
+
+#### Scenario: Self-update survives bootout of the old service job tree
+- **WHEN** a self-update operation reaches the phase that refreshes `com.kidsalfred.service`
+- **THEN** the critical refresh execution runs outside the launchd job tree being booted out
+- **AND** booting out the old main-service job does not terminate the in-flight update operation before it can finish the refresh handoff
+
+#### Scenario: Self-rollback survives bootout of the old service job tree
+- **WHEN** a self-rollback operation reaches the phase that refreshes `com.kidsalfred.service`
+- **THEN** the critical refresh execution runs outside the launchd job tree being booted out
+- **AND** booting out the old main-service job does not terminate the in-flight rollback operation before it can finish the refresh handoff
+
+#### Scenario: Update handoff remains auditable across service replacement
+- **WHEN** the old service instance hands off a self-update operation before booting itself out
+- **THEN** the system persists durable handoff state describing the in-progress operation
+- **AND** a later operator status query can reconcile that operation to a canonical terminal outcome after the new service instance starts
+
+#### Scenario: Rollback handoff remains auditable across service replacement
+- **WHEN** the old service instance hands off a self-rollback operation before booting itself out
+- **THEN** the system persists durable handoff state describing the in-progress operation
+- **AND** a later operator status query can reconcile that operation to a canonical terminal outcome after the new service instance starts
+
+#### Scenario: Shared self-update workflow remains consistent across Feishu and CLI entrypoints
+- **WHEN** `/server update` and `kfc update` invoke the shared self-update workflow
+- **THEN** they use the same inspection and detached execution semantics
+- **AND** they do not diverge into separate refresh implementations based on the caller
+
+#### Scenario: Shared self-rollback workflow remains consistent across Feishu and CLI entrypoints
+- **WHEN** `/server rollback` and `kfc rollback` invoke the shared self-rollback workflow
+- **THEN** they use the same rollback inspection and detached execution semantics
+- **AND** they do not diverge into separate refresh implementations based on the caller
+
+#### Scenario: Self-refresh helper is one-shot
+- **WHEN** the system schedules a detached helper for self-update or self-rollback
+- **THEN** the helper launchd job has a unique label for that operation
+- **AND** it runs at load without keepalive or recurring schedule semantics
+- **AND** it cleans up its own launchd job registration and plist after reaching a terminal state
+
+#### Scenario: Refresh operation ownership is claimed exactly once
+- **WHEN** a helper starts for a persisted self-refresh operation
+- **THEN** it atomically claims ownership of that operation before running the refresh
+- **AND** any later duplicate helper start for the same operation exits without executing a second refresh
+
+#### Scenario: Helper launch requires completed handoff preparation
+- **WHEN** the old service is about to schedule a self-refresh helper
+- **THEN** the operation has already passed inspection and operator confirmation
+- **AND** any linked run record has already been persisted
+- **AND** the `service_refresh_operations` record already exists in `prepared`
+- **AND** the helper is not considered handed off until both helper `bootstrap` and `kickstart` succeed
+
+#### Scenario: No refresh-side effects occur before helper scheduling succeeds
+- **WHEN** helper scheduling has not yet completed successfully
+- **THEN** the old service does not swap app directories, write new install metadata, or boot out `com.kidsalfred.service`
+- **AND** failure before successful helper scheduling leaves the currently running service version in place
+
+#### Scenario: Startup reconciliation converges unfinished refresh operations
+- **WHEN** the service starts and finds self-refresh operations left in `prepared`, `helper_bootstrapped`, or `refreshing`
+- **THEN** it reconciles them against durable host state and install metadata
+- **AND** it updates the operation record and any linked run record to a canonical terminal outcome before relying on them for operator-facing status
+
+#### Scenario: Refresh failure restores the previous serviceable version when possible
+- **WHEN** a self-update or self-rollback helper fails after crossing into the managed-service refresh boundary
+- **THEN** it attempts automatic restoration of the previous known-good app version before settling terminal state
+- **AND** if restoration succeeds, it records the operation as `restored_previous_version`
+- **AND** it leaves the host running a serviceable version of the service
+
+#### Scenario: Manual recovery is reserved for unrecoverable refresh failures
+- **WHEN** a self-update or self-rollback helper fails during refresh and automatic restoration also fails
+- **THEN** it records the operation as `manual_recovery_required`
+- **AND** the durable summary explicitly says that automatic restoration failed and manual recovery is required
+
+#### Scenario: Feishu completion follows restored service availability
+- **WHEN** a self-update fails during refresh but automatic restoration succeeds
+- **THEN** the restored service instance reconciles the durable operation state after startup
+- **AND** any Feishu-facing terminal completion reports that the update failed, automatic restoration succeeded, and the current running version is the restored version
 
 ### Requirement: Cronjob state is persisted separately from one-shot runs
 The system SHALL persist cronjob management state independently from one-shot run history so launchd-managed tasks can be queried and reconciled by `task_id`.

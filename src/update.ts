@@ -193,7 +193,7 @@ async function readEmbeddedReleaseMetadata(
   return parseEmbeddedReleaseMetadata(raw);
 }
 
-async function readInstallMetadata(
+export async function readInstallMetadata(
   metadataPath: string,
   readFileImpl: typeof readFile = readFile,
 ): Promise<InstallMetadata> {
@@ -295,12 +295,21 @@ async function queryLatestStableRelease(
   };
 }
 
-async function resolveServiceUpdateConfigPath(): Promise<string> {
+export async function resolveServiceUpdateConfigPath(): Promise<string> {
   try {
     return await readInstalledServiceConfigPath();
   } catch {
     return defaultConfigPath();
   }
+}
+
+export async function readInstalledCurrentVersion(
+  options: InspectBaseOptions = {},
+): Promise<ReleaseVersionInfo> {
+  const installRoot = resolveInstallRoot(options.installRoot);
+  const metadataPath = resolveMetadataPath(options.installMetadataPath, installRoot);
+  const metadata = await readInstallMetadata(metadataPath, options.readFileImpl ?? readFile);
+  return buildCurrentVersion(metadata);
 }
 
 async function installBunDependencies(

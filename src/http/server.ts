@@ -70,13 +70,6 @@ export async function createAppServer(
       }
       return;
     }
-
-    const route = manager.getRouteHandler(path);
-    if (route) {
-      route.handler(request, response);
-      return;
-    }
-
     sendJson(response, 404, { error: 'Not found' });
   };
 

@@ -9,7 +9,6 @@ import type {
   ExecutionMode,
   ExternalCommandTaskDefinition,
   GlobalServerConfig,
-  IngressMode,
   ParameterDefinition,
   RunnerKind,
   TaskDefinition,
@@ -213,10 +212,6 @@ function validateUniquePaths(
 
 function parseGlobalServer(input: unknown): GlobalServerConfig {
   const server = expectObject(input ?? {}, 'server');
-  const ingressMode = (server.ingress_mode ?? 'websocket-only') as IngressMode;
-  if (!['websocket-only', 'websocket-with-webhook-fallback'].includes(ingressMode)) {
-    throw new Error(`Unsupported ingress mode at server.ingress_mode: ${String(server.ingress_mode)}`);
-  }
   return {
     port: expectNumber(server.port ?? 3000, 'server.port'),
     healthPath: expectString(server.health_path ?? '/health', 'server.health_path'),
@@ -224,7 +219,6 @@ function parseGlobalServer(input: unknown): GlobalServerConfig {
       server.service_reconnect_notification_threshold_ms ?? 3600000,
       'server.service_reconnect_notification_threshold_ms',
     ),
-    ingressMode,
   };
 }
 
@@ -248,7 +242,6 @@ function resolveBotSqlitePath(value: unknown, path: string, botId: string, worki
 
 function parseBotConfig(botId: string, input: unknown, loadedAt: string): BotConfig {
   const bot = expectObject(input, `bots.${botId}`);
-  const server = expectObject(bot.server ?? {}, `bots.${botId}.server`);
   const storage = expectObject(bot.storage ?? {}, `bots.${botId}.storage`);
   const feishu = expectObject(bot.feishu ?? {}, `bots.${botId}.feishu`);
   const rawTasks = expectObject(bot.tasks ?? {}, `bots.${botId}.tasks`);
@@ -263,16 +256,6 @@ function parseBotConfig(botId: string, input: unknown, loadedAt: string): BotCon
     botId,
     allowedUsers: expectStringArray(bot.allowed_users ?? [], `bots.${botId}.allowed_users`),
     workingDirectory,
-    server: {
-      cardPath: expectString(
-        server.card_path ?? `/bots/${botId}/webhook/card`,
-        `bots.${botId}.server.card_path`,
-      ),
-      eventPath: expectString(
-        server.event_path ?? `/bots/${botId}/webhook/event`,
-        `bots.${botId}.server.event_path`,
-      ),
-    },
     storage: {
       sqlitePath: resolveBotSqlitePath(
         storage.sqlite_path,
@@ -314,8 +297,6 @@ export async function loadConfig(configPath: string): Promise<AppConfig> {
     bots[botId].sourcePath = configPath;
   }
 
-  validateUniquePaths(bots, (bot) => bot.server.cardPath, 'card_path');
-  validateUniquePaths(bots, (bot) => bot.server.eventPath, 'event_path');
   validateUniquePaths(bots, (bot) => bot.storage.sqlitePath, 'sqlite_path');
 
   return {

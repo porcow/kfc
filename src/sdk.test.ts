@@ -254,6 +254,68 @@ test('event dispatcher handlers suppress duplicate message deliveries', async ()
   assert.equal(sentCards.length, 1);
 });
 
+test('event dispatcher handlers record websocket ingress observations for long-connection events', async () => {
+  const observed: string[] = [];
+  const service = {
+    getBotId() {
+      return 'alpha';
+    },
+    observeWebSocketEvent(eventType: string) {
+      observed.push(eventType);
+    },
+    async handleMessage() {
+      return {
+        type: 'card' as const,
+        card: {
+          header: {
+            title: {
+              tag: 'plain_text',
+              content: 'ok',
+            },
+          },
+          elements: [],
+        },
+      };
+    },
+    async handleCardAction() {
+      return {
+        type: 'card' as const,
+        card: {
+          header: {
+            title: {
+              tag: 'plain_text',
+              content: 'ok',
+            },
+          },
+          elements: [],
+        },
+      };
+    },
+  };
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async create(): Promise<void> {},
+        },
+      },
+    },
+  };
+
+  const handlers = createEventDispatcherHandlers(service as any, client as any);
+
+  await handlers['im.message.receive_v1']({
+    sender: { sender_id: { open_id: 'ou_operator' } },
+    message: { content: JSON.stringify({ text: '/server health' }), chat_id: 'chat-1' },
+  });
+  await handlers['card.action.trigger']({
+    operator: { operator_id: { open_id: 'ou_operator' } },
+    action: { value: { type: 'confirm_task', confirmationId: 'confirm_1' } },
+  });
+
+  assert.deepEqual(observed, ['im.message.receive_v1', 'card.action.trigger']);
+});
+
 test('event dispatcher handlers suppress duplicate card actions', async () => {
   const actions: string[] = [];
   const seenKeys = new Set<string>();
@@ -590,7 +652,6 @@ test('websocket health transitions track reconnect failures and successful recov
   const base = {
     state: 'disconnected' as const,
     consecutiveReconnectFailures: 0,
-    fallbackEventPath: '/bots/alpha/webhook/event',
   };
 
   const reconnecting = applyWebSocketLogEvent(base, 'info', ['[ws]', 'reconnect']);
@@ -613,7 +674,6 @@ test('websocket health ignores reconnect transition after manual close', () => {
   const base = {
     state: 'disconnected' as const,
     consecutiveReconnectFailures: 2,
-    fallbackEventPath: '/bots/alpha/webhook/event',
   };
 
   const afterClose = applyWebSocketLogEvent(base, 'info', ['[ws]', 'reconnect'], {
@@ -935,7 +995,7 @@ test('service heartbeat skips persistence and notifications while the bot is not
   assert.deepEqual(serviceState, {});
 });
 
-test('service heartbeat treats recent webhook fallback as recovered availability in fallback mode', async () => {
+test('service heartbeat treats recent websocket ingress as recovered availability in websocket-only mode', async () => {
   const deliveries: any[] = [];
   const serviceState: any = {};
   const service = {
@@ -948,7 +1008,7 @@ test('service heartbeat treats recent webhook fallback as recovered availability
       };
     },
     getIngressMode() {
-      return 'websocket-with-webhook-fallback';
+      return 'websocket-only';
     },
     getServiceReconnectNotificationThresholdMs() {
       return 120000;
@@ -970,10 +1030,8 @@ test('service heartbeat treats recent webhook fallback as recovered availability
       serviceState.updatedAt = '2026-03-15T01:02:00.000Z';
       return { ...serviceState };
     },
-    getWebhookObservation() {
+    getWebSocketObservationHealth() {
       return {
-        enabled: true,
-        configured: true,
         lastEventReceivedAt: '2026-03-15T01:02:00.000Z',
         lastEventType: 'im.message.receive_v1',
         stale: false,
@@ -1015,7 +1073,7 @@ test('service heartbeat treats recent webhook fallback as recovered availability
   assert.equal(deliveries.length, 1);
   assert.ok(deliveries[0].data.content.includes('Bot 已恢复连接'));
   assert.ok(deliveries[0].data.content.includes('2分'));
-  assert.ok(deliveries[0].data.content.includes('webhook'));
+  assert.ok(deliveries[0].data.content.includes('websocket'));
   assert.equal(serviceState.lastHeartbeatSucceededAt, '2026-03-15T01:02:00.000Z');
   assert.equal(serviceState.lastReconnectedNotifiedAt, '2026-03-15T01:02:00.000Z');
 });

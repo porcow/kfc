@@ -140,77 +140,6 @@ cancellable = true
   assert.equal(config.server.serviceReconnectNotificationThresholdMs, 120000);
 });
 
-test('loadConfig defaults ingress mode to websocket-only', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-ingress-default-'));
-  const configPath = join(directory, 'bot.toml');
-  await writeFile(
-    configPath,
-    `
-[server]
-port = 3100
-
-[bots.alpha]
-allowed_users = ["user-1"]
-
-[bots.alpha.server]
-card_path = "/bots/alpha/webhook/card"
-event_path = "/bots/alpha/webhook/event"
-
-[bots.alpha.feishu]
-app_id = "alpha-app"
-app_secret = "alpha-secret"
-
-[bots.alpha.tasks.echo]
-runner_kind = "builtin-tool"
-execution_mode = "oneshot"
-description = "Builtin echo"
-tool = "echo"
-timeout_ms = 5000
-cancellable = true
-`,
-  );
-
-  const config = await loadConfig(configPath);
-
-  assert.equal(config.server.ingressMode, 'websocket-only');
-});
-
-test('loadConfig accepts webhook fallback ingress mode', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-ingress-fallback-'));
-  const configPath = join(directory, 'bot.toml');
-  await writeFile(
-    configPath,
-    `
-[server]
-port = 3100
-ingress_mode = "websocket-with-webhook-fallback"
-
-[bots.alpha]
-allowed_users = ["user-1"]
-
-[bots.alpha.server]
-card_path = "/bots/alpha/webhook/card"
-event_path = "/bots/alpha/webhook/event"
-
-[bots.alpha.feishu]
-app_id = "alpha-app"
-app_secret = "alpha-secret"
-
-[bots.alpha.tasks.echo]
-runner_kind = "builtin-tool"
-execution_mode = "oneshot"
-description = "Builtin echo"
-tool = "echo"
-timeout_ms = 5000
-cancellable = true
-`,
-  );
-
-  const config = await loadConfig(configPath);
-
-  assert.equal(config.server.ingressMode, 'websocket-with-webhook-fallback');
-});
-
 test('loadConfig accepts explicit sc configuration and keeps its protected binding', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-sc-'));
   const configPath = join(directory, 'bot.toml');
@@ -433,7 +362,7 @@ cancellable = false
   );
 });
 
-test('loadConfig rejects duplicate bot routes or storage paths', async () => {
+test('loadConfig rejects duplicate bot sqlite storage paths', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-dup-'));
   const configPath = join(directory, 'bot.toml');
   await writeFile(
@@ -444,9 +373,6 @@ port = 3100
 
 [bots.a]
 allowed_users = ["u1"]
-[bots.a.server]
-card_path = "/same/card"
-event_path = "/a/event"
 [bots.a.storage]
 sqlite_path = "./data/shared.sqlite"
 [bots.a.feishu]
@@ -462,9 +388,6 @@ cancellable = true
 
 [bots.b]
 allowed_users = ["u2"]
-[bots.b.server]
-card_path = "/same/card"
-event_path = "/b/event"
 [bots.b.storage]
 sqlite_path = "./data/shared.sqlite"
 [bots.b.feishu]
@@ -480,7 +403,7 @@ cancellable = true
 `,
   );
 
-  await assert.rejects(() => loadConfig(configPath), /Duplicate (card_path|sqlite_path)/);
+  await assert.rejects(() => loadConfig(configPath), /Duplicate sqlite_path/);
 });
 
 test('validateParameters enforces required parameters and types', async () => {

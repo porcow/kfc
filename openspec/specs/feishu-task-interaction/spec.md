@@ -2,7 +2,7 @@
 Define the Feishu-facing command, card, and reply behavior for task discovery, execution, run tracking, and authorization flows.
 ## Requirements
 ### Requirement: Authorized users can discover tasks and start runs from Feishu text commands
-The system SHALL allow an authorized Feishu user to request the list of available tasks from Feishu, inspect service health, and start task execution flows by sending structured text commands.
+The system SHALL allow an authorized Feishu user to request the list of available tasks from Feishu, inspect service health, and start task execution flows by sending structured text commands over the supported long-connection integration.
 
 #### Scenario: Authorized user requests command help
 - **WHEN** a Feishu user in the allowed user list invokes the bot help command
@@ -11,18 +11,10 @@ The system SHALL allow an authorized Feishu user to request the list of availabl
 - **AND** the help response only references `/run sc` when the current bot has explicitly configured task `sc`
 - **AND** the help response directs the user to `/tasks` for task-specific example commands rather than duplicating the full task catalog
 
-#### Scenario: Authorized user requests bot health from Feishu in websocket-only mode
+#### Scenario: Authorized user requests bot health
 - **WHEN** a Feishu user in the allowed user list sends `/server health`
-- **AND** the active service ingress mode is `websocket-only`
-- **THEN** the system returns an informational response that summarizes service readiness under the strict WebSocket-only policy
-- **AND** it includes the active bot IDs and each bot's current WebSocket health state
-
-#### Scenario: Authorized user requests bot health while webhook fallback is active
-- **WHEN** a Feishu user in the allowed user list sends `/server health`
-- **AND** the active service ingress mode is `websocket-with-webhook-fallback`
-- **THEN** the system returns an informational response that includes the ingress mode, each bot's effective availability, and the active ingress transport
-- **AND** if a bot is available only through webhook fallback it marks that bot as degraded rather than reporting a generic failure
-- **AND** it includes the current WebSocket state plus the latest webhook fallback observation details needed to explain that degraded-but-available state
+- **THEN** the system returns an informational response that summarizes service readiness, each bot's effective availability, and WebSocket ingress diagnostics
+- **AND** it does not reference webhook fallback mode or webhook observation fields
 
 #### Scenario: Authorized user requests a screen capture through the standard run flow
 - **WHEN** a Feishu user in the allowed user list sends `/run sc`
@@ -74,19 +66,19 @@ The system SHALL allow an authorized Feishu user to request the list of availabl
 - **AND** subsequent authorized requests are evaluated against the updated `allowed_users`
 
 ### Requirement: Requests are routed to the correct bot instance
-The system SHALL route each inbound Feishu event or callback to the bot instance identified by the bot-scoped WebSocket session or HTTP path, and SHALL keep bot credentials and task catalogs isolated from each other.
+The system SHALL route each inbound Feishu event or callback to the bot instance identified by the bot-scoped WebSocket session and SHALL keep bot credentials and task catalogs isolated from each other.
 
 #### Scenario: WebSocket event is received for bot A
 - **WHEN** the process receives an event on bot A's Feishu WebSocket client
 - **THEN** only bot A's task catalog, authorization rules, and response client are used to handle the event
 
-#### Scenario: HTTP card callback is received on a bot-scoped path
-- **WHEN** the process receives a card callback on `/bots/<id>/webhook/card`
-- **THEN** it dispatches the request to the bot instance for `<id>` and does not expose any other bot's configuration
+#### Scenario: WebSocket card action is received for bot A
+- **WHEN** the process receives `card.action.trigger` through bot A's Feishu long connection
+- **THEN** only bot A's task catalog, authorization rules, and response client are used to handle the action
 
-#### Scenario: Unknown bot path is requested
-- **WHEN** the process receives an HTTP event or callback for a bot identifier that is not active
-- **THEN** it rejects the request and does not route it to any bot instance
+#### Scenario: Unsupported HTTP callback path is requested
+- **WHEN** the process receives an HTTP Feishu event or callback request for a bot-scoped webhook path
+- **THEN** it rejects the request because bot-scoped Feishu HTTP ingress is no longer supported
 
 ### Requirement: Task execution requires explicit confirmation
 The system SHALL require an authorized user to submit task parameters through a structured `/run ...` text command, review the resulting pending request, and explicitly confirm execution before a run is created.
@@ -329,5 +321,5 @@ The system SHALL preserve its Feishu command, card, messaging, and upload behavi
 - **THEN** the Feishu SDK-dependent tests pass without relying on a Node runtime fallback
 
 #### Scenario: Bun-only runtime preserves Feishu command handling
-- **WHEN** the service handles Feishu text commands, card callbacks, and result delivery under the supported runtime
+- **WHEN** the service handles Feishu text commands, long-connection card actions, and result delivery under the supported runtime
 - **THEN** the system preserves the existing Feishu-facing behavior for task execution, status cards, health replies, and uploads
