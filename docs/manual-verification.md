@@ -28,37 +28,38 @@
 5. Under long-connection mode, if the bot is still responding while WebSocket transport state is reconnecting, confirm `/server health` can still show the bot as available via recent WebSocket ingress rather than reporting a false unavailable state.
 6. Confirm every human-facing timestamp shown in Feishu cards or replies uses `YYYY/MM/DD HH:mm:ss` rather than mixed ISO strings.
 7. Confirm `service_online` is emitted only once after the bot first reaches `connected` in the current main-service process session.
-8. Confirm `service_reconnected` is not emitted for short reconnect churn, and is emitted only after a successful availability heartbeat occurs following a gap greater than the configured threshold under the active ingress mode.
-9. Send `/tasks` from an allowed Feishu user in bot A and confirm bot A's one-shot task list card arrives.
-10. Send `/tasks` from an allowed Feishu user in bot B and confirm bot B's task list is different if configured differently.
-11. For a bot that explicitly configures task `sc`, send `/run sc` from an allowed Feishu user and confirm:
+8. Confirm `service_reconnected` is not emitted for short reconnect churn, and is emitted only after a successful availability evaluation occurs following a gap greater than the configured threshold under the active ingress mode.
+9. Confirm a bot that has already been running long enough to establish a successful-heartbeat baseline can sleep or disconnect past the threshold, recover availability, and emit `service_reconnected` shortly after recovery rather than waiting for the next 60-second timer boundary.
+10. Send `/tasks` from an allowed Feishu user in bot A and confirm bot A's one-shot task list card arrives.
+11. Send `/tasks` from an allowed Feishu user in bot B and confirm bot B's task list is different if configured differently.
+12. For a bot that explicitly configures task `sc`, send `/run sc` from an allowed Feishu user and confirm:
    - the bot returns the normal confirmation card rather than using a dedicated `/sc` shortcut
    - confirming the request captures the current screen and sends the screenshot image back to the same chat
    - the temporary screenshot file under `~/.kfc/data/screenshot-YYYYMMDD-HHmmss.png` is deleted after successful image delivery
    - if Feishu image upload or send fails, the run surfaces a clear failure and the screenshot file remains on disk for debugging
-12. For a bot that explicitly configures task `shell`, send `/shell echo "hello world"` and confirm:
+13. For a bot that explicitly configures task `shell`, send `/shell echo "hello world"` and confirm:
    - the bot returns the normal one-shot confirmation card with a bounded preview of the submitted script body
    - confirming the request executes the shell script locally through a temporary materialized script file
    - the resulting run remains queryable through `/run-status RUN_ID`
    - an empty `/shell` submission is rejected before confirmation with a clear `script content is required` style error
-13. For a bot that explicitly configures task `osascript`, send `/osascript display notification "Hello World" with title "Test"` and confirm:
+14. For a bot that explicitly configures task `osascript`, send `/osascript display notification "Hello World" with title "Test"` and confirm:
    - the bot returns the normal one-shot confirmation card with a bounded preview of the submitted AppleScript body
    - confirming the request executes the AppleScript locally through `osascript` using a temporary materialized script file
    - the resulting run remains queryable through `/run-status RUN_ID`
    - an empty `/osascript` submission is rejected before confirmation with a clear `script content is required` style error
-14. For a bot that explicitly configures task `update`, send `/server update` and confirm:
+15. For a bot that explicitly configures task `update`, send `/server update` and confirm:
    - the bot returns the normal one-shot confirmation card
    - if the latest stable GitHub Release matches the local install metadata, the confirmed run succeeds with an `already latest` style summary
    - if a newer stable release is available, the confirmed run enters `running`, hands the refresh phase off to a detached helper, and the terminal summary arrives after service restart
    - confirm the detached helper does not disappear when the old `com.kidsalfred.service` job is booted out
    - if service refresh fails after swap but automatic rollback succeeds, the run fails with a summary that explicitly says the update failed and the service was restored to the previous version
    - if update and automatic rollback both fail, the run fails with a summary that explicitly says manual recovery is required
-15. For a bot that explicitly configures task `rollback`, send `/server rollback` and confirm:
+16. For a bot that explicitly configures task `rollback`, send `/server rollback` and confirm:
    - the bot returns the normal one-shot confirmation card
    - if `app.previous` and matching install metadata are present, the confirmed run hands the refresh phase off to a detached helper and reports the restored current version after service restart
    - if no rollback target exists, the run fails with `no rollback version is available`
    - if service refresh fails after swap, the run summary explicitly states whether automatic restoration succeeded or manual recovery is required
-16. Trigger one `builtin-tool` task and confirm:
+17. Trigger one `builtin-tool` task and confirm:
    - the task list card shows an example `/run ...` command
    - sending `/run ...` with invalid parameters returns validation feedback without creating a run
    - a confirmation card is shown after valid `/run ...` submission
@@ -68,25 +69,25 @@
    - the run card is informational only and includes `Run ID`, `Task`, `State`, `Actor`, `Started At`, `Finished At`, and `Summary`
    - the originating chat receives a follow-up `running` update and a terminal update
    - status lookup shows the same canonical card shape and the latest persisted state
-17. Trigger one `external-command` task and confirm the same request and run-status flow works.
-18. Click `Cancel` on a pending confirmation and confirm no run is created for that request.
-19. Retry the same confirmation action and confirm no duplicate run is created.
-20. Send `/cancel RUN_ID` for a cancellable running task and confirm it transitions to `cancelled`.
-21. Edit the TOML file without reloading and confirm the active task list does not change.
-22. Trigger reload and confirm the updated task list becomes visible across all valid bots.
-23. Introduce an invalid bot config, trigger reload, and confirm the prior active bot map remains unchanged.
-24. Stop the service during a running task, restart it, and confirm completed runs remain queryable and interrupted runs are marked failed.
-25. Confirm each bot writes to its own SQLite file.
-26. Use a task that returns or fails with a long message and confirm the Feishu `Summary` field is truncated rather than streaming the full output.
-27. Simulate or induce a Feishu push-delivery failure, then confirm `/run-status RUN_ID` still returns the persisted terminal result.
-28. Confirm a failed Feishu milestone push emits a JSON error log with `logType: "feishu_run_update_delivery_failed"` and the affected `runId`.
-29. Send `/cron list` and confirm only cronjob tasks are listed.
-30. Send `/cron start TASK_ID` for a cronjob task from chat A and confirm the current chat is shown as subscribed and the task reports running or already running without restart churn.
-31. Send `/cron start TASK_ID` for the same task from chat B and confirm both chats can remain subscribed while runtime state stays running.
-32. Send `/cron status` and confirm it returns the observed `running/stopped` state for the active bot without current-chat subscription details.
-33. Send `/run TASK_ID ...` for a cronjob task and confirm the bot replies with a mode-mismatch message directing you to `/cron`.
-34. Send `/cron start TASK_ID` for a one-shot task and confirm the bot replies with a mode-mismatch error.
-35. Subscribe one or more chats to `checkPDWin11` with `/cron start check-pd-win11` and confirm:
+18. Trigger one `external-command` task and confirm the same request and run-status flow works.
+19. Click `Cancel` on a pending confirmation and confirm no run is created for that request.
+20. Retry the same confirmation action and confirm no duplicate run is created.
+21. Send `/cancel RUN_ID` for a cancellable running task and confirm it transitions to `cancelled`.
+22. Edit the TOML file without reloading and confirm the active task list does not change.
+23. Trigger reload and confirm the updated task list becomes visible across all valid bots.
+24. Introduce an invalid bot config, trigger reload, and confirm the prior active bot map remains unchanged.
+25. Stop the service during a running task, restart it, and confirm completed runs remain queryable and interrupted runs are marked failed.
+26. Confirm each bot writes to its own SQLite file.
+27. Use a task that returns or fails with a long message and confirm the Feishu `Summary` field is truncated rather than streaming the full output.
+28. Simulate or induce a Feishu push-delivery failure, then confirm `/run-status RUN_ID` still returns the persisted terminal result.
+29. Confirm a failed Feishu milestone push emits a JSON error log with `logType: "feishu_run_update_delivery_failed"` and the affected `runId`.
+30. Send `/cron list` and confirm only cronjob tasks are listed.
+31. Send `/cron start TASK_ID` for a cronjob task from chat A and confirm the current chat is shown as subscribed and the task reports running or already running without restart churn.
+32. Send `/cron start TASK_ID` for the same task from chat B and confirm both chats can remain subscribed while runtime state stays running.
+33. Send `/cron status` and confirm it returns the observed `running/stopped` state for the active bot without current-chat subscription details.
+34. Send `/run TASK_ID ...` for a cronjob task and confirm the bot replies with a mode-mismatch message directing you to `/cron`.
+35. Send `/cron start TASK_ID` for a one-shot task and confirm the bot replies with a mode-mismatch error.
+36. Subscribe one or more chats to `checkPDWin11` with `/cron start check-pd-win11` and confirm:
    - `prlctl` is available on the host and can resolve the configured `Windows 11` VM by name
    - no notification is sent while the observed VM remains off
    - starting the Windows 11 Parallels VM causes exactly one startup notification card per subscribed chat
@@ -98,8 +99,8 @@
    - stopping the VM causes exactly one shutdown notification card per subscribed chat
    - the shutdown card title is `MC 下线!`
    - the shutdown card includes detected shutdown time and cumulative runtime in readable format
-36. Send `/cron stop check-pd-win11` and confirm the task stops globally and clears all subscriptions so later transitions do not fan out until `/cron start` is issued again.
-37. Restart the service after a startup notification but before shutdown, then stop the VM and confirm the persisted monitor state still allows the next polling run to emit the correct shutdown notification.
+37. Send `/cron stop check-pd-win11` and confirm the task stops globally and clears all subscriptions so later transitions do not fan out until `/cron start` is issued again.
+38. Restart the service after a startup notification but before shutdown, then stop the VM and confirm the persisted monitor state still allows the next polling run to emit the correct shutdown notification.
 
 ## Pairing Checks
 

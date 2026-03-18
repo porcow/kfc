@@ -161,8 +161,9 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 
 - Each bot keeps its own Feishu long connection and exposes bot-scoped WebSocket transport and ingress observations through `/server health`.
 - `service_online` is emitted only once per bot runtime, when that bot first reaches `connected` after the main service process starts.
-- `service_reconnected` is emitted from the per-bot heartbeat evaluator, not directly from reconnect/disconnect state churn.
-- The heartbeat evaluator runs once per minute and uses the same WebSocket-ingress-aware availability predicate exposed by `/server health`.
+- `service_reconnected` is emitted from the same availability-aware reconnect evaluator used by the periodic heartbeat path, not directly from reconnect/disconnect state churn.
+- The service establishes a startup heartbeat baseline as soon as a bot becomes available and then keeps a once-per-minute periodic heartbeat as a safety net.
+- When effective WebSocket availability transitions from unavailable to available, the service immediately re-runs reconnect evaluation instead of waiting only for the next 60-second heartbeat tick.
 - A successful availability check can come from either a connected WebSocket transport or a recent WebSocket-delivered ingress observation for that bot.
 - Health output includes the bot's WebSocket transport state, recent WebSocket ingress observations, active ingress transport, and effective availability.
 - Exceeding the reconnect-failure threshold does not automatically switch Feishu subscription mode. The warning is operator guidance only.

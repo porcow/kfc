@@ -9,10 +9,12 @@ import { buildRunStatusCard } from './feishu/cards.ts';
 import { formatFeishuTimestamp } from './feishu/timestamp.ts';
 import {
   applyWebSocketLogEvent,
+  type AvailabilityEvaluationDecision,
   createEventDispatcherHandlers,
   extractCardActionPayload,
   FeishuRunUpdateSink,
   FeishuTaskResultSink,
+  planAvailabilityEvaluation,
   shouldEmitSdkDebugLog,
   processServiceHeartbeat,
   processServiceConnectionTransition,
@@ -1142,4 +1144,84 @@ test('service heartbeat treats recent websocket ingress as recovered availabilit
   assert.ok(deliveries[0].data.content.includes('websocket'));
   assert.equal(serviceState.lastHeartbeatSucceededAt, '2026-03-15T01:02:00.000Z');
   assert.equal(serviceState.lastReconnectedNotifiedAt, '2026-03-15T01:02:00.000Z');
+});
+
+test('startup baseline evaluation runs once when availability is already true', () => {
+  const decision = planAvailabilityEvaluation({
+    reason: 'startup',
+    previousAvailability: false,
+    nextAvailability: true,
+    startupBaselineEvaluated: false,
+  });
+
+  assert.deepEqual(decision, {
+    shouldEvaluate: true,
+    nextStartupBaselineEvaluated: true,
+    nextLastEvaluatedAvailability: true,
+  } satisfies AvailabilityEvaluationDecision);
+
+  const secondDecision = planAvailabilityEvaluation({
+    reason: 'startup',
+    previousAvailability: true,
+    nextAvailability: true,
+    startupBaselineEvaluated: true,
+  });
+
+  assert.deepEqual(secondDecision, {
+    shouldEvaluate: false,
+    nextStartupBaselineEvaluated: true,
+    nextLastEvaluatedAvailability: true,
+  } satisfies AvailabilityEvaluationDecision);
+});
+
+test('availability recovery edge triggers immediate evaluation for transport and ingress reasons only once per edge', () => {
+  const transportRecovery = planAvailabilityEvaluation({
+    reason: 'transport',
+    previousAvailability: false,
+    nextAvailability: true,
+    startupBaselineEvaluated: true,
+  });
+  assert.deepEqual(transportRecovery, {
+    shouldEvaluate: true,
+    nextStartupBaselineEvaluated: true,
+    nextLastEvaluatedAvailability: true,
+  } satisfies AvailabilityEvaluationDecision);
+
+  const duplicateIngressSignal = planAvailabilityEvaluation({
+    reason: 'ingress',
+    previousAvailability: true,
+    nextAvailability: true,
+    startupBaselineEvaluated: true,
+  });
+  assert.deepEqual(duplicateIngressSignal, {
+    shouldEvaluate: false,
+    nextStartupBaselineEvaluated: true,
+    nextLastEvaluatedAvailability: true,
+  } satisfies AvailabilityEvaluationDecision);
+});
+
+test('periodic evaluation always runs and keeps last evaluated availability current', () => {
+  const unavailableTick = planAvailabilityEvaluation({
+    reason: 'periodic',
+    previousAvailability: true,
+    nextAvailability: false,
+    startupBaselineEvaluated: true,
+  });
+  assert.deepEqual(unavailableTick, {
+    shouldEvaluate: true,
+    nextStartupBaselineEvaluated: true,
+    nextLastEvaluatedAvailability: false,
+  } satisfies AvailabilityEvaluationDecision);
+
+  const recoveredTick = planAvailabilityEvaluation({
+    reason: 'periodic',
+    previousAvailability: false,
+    nextAvailability: true,
+    startupBaselineEvaluated: true,
+  });
+  assert.deepEqual(recoveredTick, {
+    shouldEvaluate: true,
+    nextStartupBaselineEvaluated: true,
+    nextLastEvaluatedAvailability: true,
+  } satisfies AvailabilityEvaluationDecision);
 });

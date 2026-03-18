@@ -823,44 +823,61 @@ The system SHALL persist service-level event subscriptions separately from task 
 The system SHALL persist service connection-event state per bot so online-session and heartbeat-based reconnect detection survive process restarts and remain separate from run history and cron runtime state.
 
 #### Scenario: Bot persists successful heartbeat timestamps
-- **WHEN** a bot heartbeat evaluator confirms that the Feishu long connection is currently `connected`
+- **WHEN** a bot heartbeat evaluator confirms that effective WebSocket availability is currently recovered
 - **THEN** the system records the current heartbeat success timestamp in persisted service-event state
-- **AND** that timestamp becomes the prior-success reference for the next heartbeat evaluation
+- **AND** that timestamp becomes the prior-success reference for the next reconnect evaluation
 
 #### Scenario: Bot persists reconnect notification bookkeeping
 - **WHEN** a bot sends a `service_reconnected` notification after a successful heartbeat gap exceeds the reconnect threshold
 - **THEN** the system updates the persisted bot connection-event state with the current heartbeat success time and the last reconnect notification time
 
-#### Scenario: Service-online notification is session-scoped rather than permanently deduplicated
-- **WHEN** a bot process restarts and the bot reaches its first successful `connected` state in the new process session
-- **THEN** the system may emit a new `service_online` notification even if it emitted one in a prior process session
-- **AND** this session-scoped dedup is tracked in process memory rather than as a permanent bot-history flag
+#### Scenario: Service event state reuses the bot sqlite store
+- **WHEN** a bot runtime persists service connection-event state
+- **THEN** it stores that state in the same bot-scoped sqlite database used for run history and cron metadata
+- **AND** it keeps service-event state logically separate from run records and cron records
 
-#### Scenario: Fresh reinstall may initialize the new service-event schema without historical compatibility
-- **WHEN** the operator upgrades through `kfc uninstall` followed by a fresh install
+#### Scenario: Service event state can be created on an otherwise empty sqlite store
+- **WHEN** a bot runtime needs to persist service connection-event state before any runs or cron state exist
 - **THEN** the system may create a fresh sqlite database using only the heartbeat-based service-event state schema
-- **AND** it does not need to preserve or translate historical `last_disconnected_at` data from a prior installation
+- **AND** later run and cron tables remain compatible with that database
 
 ### Requirement: WebSocket connection transitions can emit service event notifications
-The system SHALL emit `service_online` from the first successful WebSocket connection in the current process session and SHALL emit `service_reconnected` from heartbeat-success gaps rather than from reconnect/disconnect transition windows.
+The system SHALL emit `service_online` from the first successful WebSocket connection in the current process session and SHALL emit `service_reconnected` from availability-success gaps rather than from reconnect/disconnect transition windows.
 
-#### Scenario: First successful connected state emits service_online
-- **WHEN** a bot runtime reaches its first successful WebSocket `connected` state after the main service process starts
-- **THEN** the system emits one `service_online` event notification for that process session
+#### Scenario: First connected transition emits service_online once per session
+- **WHEN** a bot transitions into `connected` for the first time in the current service process session
+- **THEN** the system emits one `service_online` event notification
+- **AND** later transitions to `connected` in the same process session do not emit another `service_online`
+
+#### Scenario: Startup baseline evaluation does not emit service_reconnected
+- **WHEN** the service performs the immediate startup heartbeat-style evaluation for a bot
+- **AND** no prior successful heartbeat timestamp exists yet for that bot
+- **THEN** the system records the successful heartbeat baseline when effective availability is present
+- **AND** it does not emit `service_reconnected`
 
 #### Scenario: Large heartbeat-success gap emits service_reconnected
-- **WHEN** the bot heartbeat evaluator runs while the bot is currently `connected`
+- **WHEN** the bot reconnect evaluator runs while effective WebSocket availability is currently present
 - **AND** a prior successful heartbeat timestamp exists
 - **AND** the elapsed time between the current successful heartbeat and the prior successful heartbeat is at least the global `server.service_reconnect_notification_threshold_ms`
 - **THEN** the system emits one `service_reconnected` event notification
 
+#### Scenario: Availability recovery triggers immediate reconnect evaluation
+- **WHEN** effective WebSocket availability transitions from unavailable to available because transport recovery or a new WebSocket ingress observation restores serviceability
+- **THEN** the system performs an immediate reconnect evaluation using the same persistence path and threshold logic as the periodic heartbeat evaluator
+- **AND** it does not wait solely for the next periodic heartbeat tick
+
 #### Scenario: Small heartbeat-success gap does not emit service_reconnected
-- **WHEN** the bot heartbeat evaluator runs while the bot is currently `connected`
+- **WHEN** the bot reconnect evaluator runs while effective WebSocket availability is currently present
 - **AND** a prior successful heartbeat timestamp exists
 - **AND** the elapsed time between the current successful heartbeat and the prior successful heartbeat is less than the global `server.service_reconnect_notification_threshold_ms`
 - **THEN** the system does not emit `service_reconnected`
 
-#### Scenario: Reconnect threshold defaults to one hour
+#### Scenario: Reconnect evaluator still has a periodic safety-net tick
+- **WHEN** no explicit recovery edge is observed for a bot but the periodic heartbeat timer fires
+- **THEN** the system still evaluates reconnect state through the same heartbeat-success path
+- **AND** periodic evaluation remains a fallback rather than the only reconnect trigger
+
+#### Scenario: Default reconnect notification threshold remains one hour
 - **WHEN** the operator does not configure `server.service_reconnect_notification_threshold_ms`
 - **THEN** the system uses a default reconnect notification threshold of `3600000` milliseconds
 

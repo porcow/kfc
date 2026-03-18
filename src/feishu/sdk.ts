@@ -183,6 +183,14 @@ const CONNECTION_SUCCESS_PATTERNS = ['ws connect success', 'ws client ready', 'r
 const CONNECTION_RECONNECT_FAILURE_PATTERNS = ['connect failed', 'ws connect failed'] as const;
 const CONNECTION_DEBUG_PATTERNS = [...CONNECTION_SUCCESS_PATTERNS, 'client closed'] as const;
 
+export type AvailabilityEvaluationReason = 'startup' | 'transport' | 'ingress' | 'periodic';
+
+export interface AvailabilityEvaluationDecision {
+  shouldEvaluate: boolean;
+  nextLastEvaluatedAvailability: boolean;
+  nextStartupBaselineEvaluated: boolean;
+}
+
 function stringifyLogMessage(message: unknown): string {
   if (typeof message === 'string') {
     return message;
@@ -293,6 +301,44 @@ export function applyWebSocketLogEvent(
   }
 
   return health;
+}
+
+export function planAvailabilityEvaluation(options: {
+  reason: AvailabilityEvaluationReason;
+  previousAvailability: boolean;
+  nextAvailability: boolean;
+  startupBaselineEvaluated: boolean;
+}): AvailabilityEvaluationDecision {
+  const nextLastEvaluatedAvailability = options.nextAvailability;
+
+  if (options.reason === 'periodic') {
+    return {
+      shouldEvaluate: true,
+      nextLastEvaluatedAvailability,
+      nextStartupBaselineEvaluated: options.startupBaselineEvaluated,
+    };
+  }
+
+  if (options.reason === 'startup') {
+    if (!options.startupBaselineEvaluated && options.nextAvailability) {
+      return {
+        shouldEvaluate: true,
+        nextLastEvaluatedAvailability,
+        nextStartupBaselineEvaluated: true,
+      };
+    }
+    return {
+      shouldEvaluate: false,
+      nextLastEvaluatedAvailability,
+      nextStartupBaselineEvaluated: options.startupBaselineEvaluated,
+    };
+  }
+
+  return {
+    shouldEvaluate: !options.previousAvailability && options.nextAvailability,
+    nextLastEvaluatedAvailability,
+    nextStartupBaselineEvaluated: options.startupBaselineEvaluated,
+  };
 }
 
 async function sendInteractiveCard(
@@ -648,10 +694,15 @@ function buildCardActionIngressKey(service: Pick<KidsAlfredService, 'getBotId'>,
 export function createEventDispatcherHandlers(
   service: IngressAwareService,
   client: ReplyClient,
+  options: {
+    onWebSocketIngressObserved?: (eventType: 'im.message.receive_v1' | 'card.action.trigger', now: string) => void;
+  } = {},
 ): Record<string, (data: any) => Promise<unknown>> {
   return {
     'im.message.receive_v1': async (data: any) => {
-      service.observeWebSocketEvent?.('im.message.receive_v1');
+      const now = new Date().toISOString();
+      service.observeWebSocketEvent?.('im.message.receive_v1', now);
+      options.onWebSocketIngressObserved?.('im.message.receive_v1', now);
       const actorId = extractActorId(data);
       const text = parseMessageText(data?.message?.content ?? '');
       const chatId = typeof data?.message?.chat_id === 'string' ? data.message.chat_id : '';
@@ -681,7 +732,9 @@ export function createEventDispatcherHandlers(
       }
     },
     'card.action.trigger': async (data: any) => {
-      service.observeWebSocketEvent?.('card.action.trigger');
+      const now = new Date().toISOString();
+      service.observeWebSocketEvent?.('card.action.trigger', now);
+      options.onWebSocketIngressObserved?.('card.action.trigger', now);
       const actorId = extractActorId(data);
       const action = extractCardActionPayload(data);
       const eventKey = buildCardActionIngressKey(service, data, actorId, action);
@@ -736,6 +789,8 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
   let wsClient: any;
   let manuallyClosed = false;
   let onlineNotificationSent = false;
+  let lastEvaluatedAvailability = false;
+  let startupBaselineEvaluated = false;
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   let connectionEventQueue = Promise.resolve();
   const enqueueConnectionEvent = (operation: () => Promise<void>) => {
@@ -770,11 +825,30 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       );
     });
   };
-  const runHeartbeatCheck = () => {
-    const now = new Date().toISOString();
+  const enqueueAvailabilityEvaluation = (
+    reason: AvailabilityEvaluationReason,
+    now: string = new Date().toISOString(),
+  ) => {
     enqueueConnectionEvent(async () => {
-      await processServiceHeartbeat(service, client, now, { ...webSocketHealth });
+      const currentHealth = { ...webSocketHealth };
+      const websocketHealth = getWebSocketHealthForService(service, currentHealth, now);
+      const availability = buildAvailability(websocketHealth);
+      const decision = planAvailabilityEvaluation({
+        reason,
+        previousAvailability: lastEvaluatedAvailability,
+        nextAvailability: availability.ingressAvailable,
+        startupBaselineEvaluated,
+      });
+      lastEvaluatedAvailability = decision.nextLastEvaluatedAvailability;
+      startupBaselineEvaluated = decision.nextStartupBaselineEvaluated;
+      if (!decision.shouldEvaluate) {
+        return;
+      }
+      await processServiceHeartbeat(service, client, now, currentHealth);
     });
+  };
+  const runHeartbeatCheck = () => {
+    enqueueAvailabilityEvaluation('periodic');
   };
   const developmentRuntime = isDevelopmentRuntime();
   const wsLogger = {
@@ -788,6 +862,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       });
       Object.assign(webSocketHealth, nextHealth);
       handleConnectionTransition(previousHealth, nextHealth, now);
+      enqueueAvailabilityEvaluation('transport', now);
     },
     warn: (...messages: unknown[]) => {
       console.warn(...messages);
@@ -802,6 +877,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       });
       Object.assign(webSocketHealth, nextHealth);
       handleConnectionTransition(previousHealth, nextHealth, now);
+      enqueueAvailabilityEvaluation('transport', now);
     },
     debug: (...messages: unknown[]) => {
       if (shouldEmitSdkDebugLog('debug', messages, { developmentRuntime })) {
@@ -815,6 +891,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       });
       Object.assign(webSocketHealth, nextHealth);
       handleConnectionTransition(previousHealth, nextHealth, now);
+      enqueueAvailabilityEvaluation('transport', now);
     },
     trace: (...messages: unknown[]) => {
       if (shouldEmitSdkDebugLog('trace', messages, { developmentRuntime })) {
@@ -837,7 +914,11 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
     ),
   );
   service.attachTaskResultDeliverySink(new FeishuTaskResultSink(client));
-  const websocketEventHandlers = createEventDispatcherHandlers(service, client);
+  const websocketEventHandlers = createEventDispatcherHandlers(service, client, {
+    onWebSocketIngressObserved: (_eventType, now) => {
+      enqueueAvailabilityEvaluation('ingress', now);
+    },
+  });
 
   const eventDispatcher = new sdk.EventDispatcher({}).register(websocketEventHandlers);
 
@@ -848,6 +929,8 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
         return;
       }
       manuallyClosed = false;
+      lastEvaluatedAvailability = false;
+      startupBaselineEvaluated = false;
       webSocketHealth.state = 'connecting';
       wsClient = new sdk.WSClient({
         ...baseConfig,
@@ -856,12 +939,15 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       });
       await wsClient.start({ eventDispatcher });
       heartbeatTimer = setInterval(runHeartbeatCheck, 60_000);
+      enqueueAvailabilityEvaluation('startup');
     },
     close: async () => {
       if (!wsClient) {
         return;
       }
       manuallyClosed = true;
+      lastEvaluatedAvailability = false;
+      startupBaselineEvaluated = false;
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
         heartbeatTimer = undefined;
