@@ -94,7 +94,7 @@ test('kfc CLI delegates service lifecycle commands', async () => {
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       stdout: { write() {} },
       stderr: { write() {} },
     },
@@ -119,7 +119,7 @@ test('kfc CLI delegates service lifecycle commands', async () => {
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       stdout: { write() {} },
       stderr: { write() {} },
     },
@@ -144,7 +144,7 @@ test('kfc CLI delegates service lifecycle commands', async () => {
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       stdout: { write() {} },
       stderr: { write() {} },
     },
@@ -169,7 +169,7 @@ test('kfc CLI delegates service lifecycle commands', async () => {
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       stdout: { write() {} },
       stderr: { write() {} },
     },
@@ -205,7 +205,7 @@ test('kfc service install falls back to the default config path when --config is
         },
         pairAuthorizer: async () => ({ actorId: '', changed: false }),
         taskExecutor: async () => ({ summary: 'ok' }),
-        healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+        healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
         stdout: { write(value) { outputs.push(String(value)); } },
         stderr: { write(value) { errors.push(String(value)); } },
       },
@@ -246,7 +246,7 @@ test('kfc update prints already-latest status without confirmation', async () =>
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       updateInspector: async () => ({
         status: 'up_to_date',
         currentVersion: {
@@ -301,7 +301,7 @@ test('kfc update prompts before performing an available update', async () => {
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       updateInspector: async () => ({
         status: 'update_available',
         currentVersion: {
@@ -374,7 +374,7 @@ test('kfc update supports --yes and skips confirmation', async () => {
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       updateInspector: async () => ({
         status: 'update_available',
         currentVersion: {
@@ -445,7 +445,7 @@ test('kfc update exits cleanly when the user declines confirmation and surfaces 
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       updateInspector: async () => ({
         status: 'update_available',
         currentVersion: {
@@ -493,7 +493,7 @@ test('kfc update exits cleanly when the user declines confirmation and surfaces 
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       updateInspector: async () => ({
         status: 'blocked',
         summary: 'Update blocked: install metadata is unusable.',
@@ -528,7 +528,7 @@ test('kfc rollback prompts before performing an available rollback and supports 
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       rollbackInspector: async () => ({
         status: 'rollback_available',
         currentVersion: {
@@ -595,7 +595,7 @@ test('kfc rollback prompts before performing an available rollback and supports 
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       rollbackInspector: async () => ({
         status: 'rollback_available',
         currentVersion: {
@@ -725,7 +725,7 @@ test('kfc service install without --config returns a clear error when the defaul
         },
         pairAuthorizer: async () => ({ actorId: '', changed: false }),
         taskExecutor: async () => ({ summary: 'ok' }),
-        healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+        healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
         stdout: { write(value) { outputs.push(String(value)); } },
         stderr: { write(value) { errors.push(String(value)); } },
       },
@@ -768,7 +768,7 @@ test('kfc CLI delegates pair and exec commands', async () => {
         return { actorId: 'ou_1', changed: true };
       },
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       stdout: { write(value) { outputs.push(String(value)); } },
       stderr: { write(value) { errors.push(String(value)); } },
     },
@@ -789,7 +789,7 @@ test('kfc CLI delegates pair and exec commands', async () => {
         outputs.push(`exec:${botId}:${taskId}`);
         return { summary: 'cleanup completed' };
       },
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       stdout: { write(value) { outputs.push(String(value)); } },
       stderr: { write(value) { errors.push(String(value)); } },
     },
@@ -823,10 +823,17 @@ test('kfc health prints the canonical health snapshot', async () => {
         ok: true,
         loadedAt: '2026-03-14T08:30:00.000Z',
         bots: ['alpha'],
-        websocket: {
+        botHealth: {
           alpha: {
-            state: 'connected',
-            consecutiveReconnectFailures: 0,
+            websocket: {
+              state: 'connected',
+              consecutiveReconnectFailures: 0,
+            },
+            availability: {
+              ingressAvailable: true,
+              activeIngress: 'websocket',
+              summary: 'Available via WebSocket',
+            },
           },
         },
         ready: true,
@@ -871,6 +878,34 @@ test('kfc health returns a clear error when the local health endpoint is unreach
   assert.ok(errors.some((entry) => entry.includes('Unable to reach local health endpoint')));
 });
 
+test('kfc version prints the current version label', async () => {
+  const outputs: string[] = [];
+  const errors: string[] = [];
+
+  const exitCode = await runKfcCli(
+    ['version'],
+    {
+      serviceManager: {
+        async install() {},
+        async uninstall() {},
+        async start() {},
+        async restart() {},
+        async stop() {},
+      },
+      pairAuthorizer: async () => ({ actorId: '', changed: false }),
+      taskExecutor: async () => ({ summary: 'ok' }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
+      versionReader: async () => 'v0.1.3',
+      stdout: { write(value) { outputs.push(String(value)); } },
+      stderr: { write(value) { errors.push(String(value)); } },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(errors, []);
+  assert.equal(outputs.join(''), 'v0.1.3\n');
+});
+
 test('kfc uninstall runs full uninstall after interactive confirmation', async () => {
   const outputs: string[] = [];
   const errors: string[] = [];
@@ -888,7 +923,7 @@ test('kfc uninstall runs full uninstall after interactive confirmation', async (
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       confirmFullUninstall: async (prompt) => {
         calls.push(`confirm:${prompt}`);
         return true;
@@ -925,7 +960,7 @@ test('kfc uninstall aborts cleanly when confirmation is declined', async () => {
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       confirmFullUninstall: async () => {
         calls.push('confirm');
         return false;
@@ -961,7 +996,7 @@ test('kfc uninstall --yes skips confirmation and uninstalls immediately', async 
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       confirmFullUninstall: async () => {
         calls.push('confirm');
         return true;
@@ -997,7 +1032,7 @@ test('kfc uninstall --delete-config updates prompt and deletes config when confi
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       confirmFullUninstall: async (prompt) => {
         calls.push(`confirm:${prompt}`);
         return true;
@@ -1034,7 +1069,7 @@ test('kfc uninstall --yes --delete-config skips confirmation and deletes config'
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       confirmFullUninstall: async () => {
         calls.push('confirm');
         return true;
@@ -1074,7 +1109,7 @@ test('kfc CLI reports clear errors for uninstalled service lifecycle operations'
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       stdout: { write() {} },
       stderr: { write(value) { errors.push(String(value)); } },
     },
@@ -1098,7 +1133,7 @@ test('kfc CLI reports clear errors for uninstalled service lifecycle operations'
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       stdout: { write() {} },
       stderr: { write(value) { errors.push(String(value)); } },
     },
@@ -1122,7 +1157,7 @@ test('kfc CLI reports clear errors for uninstalled service lifecycle operations'
       },
       pairAuthorizer: async () => ({ actorId: '', changed: false }),
       taskExecutor: async () => ({ summary: 'ok' }),
-      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], websocket: {}, ready: true }),
+      healthReader: async () => ({ ok: true, loadedAt: '', bots: [], botHealth: {}, ready: true }),
       stdout: { write() {} },
       stderr: { write(value) { errors.push(String(value)); } },
     },

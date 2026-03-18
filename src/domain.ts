@@ -292,7 +292,6 @@ export interface BotWebSocketHealth {
 export interface BotAvailabilityHealth {
   ingressAvailable: boolean;
   activeIngress: 'websocket' | 'unknown';
-  degraded: boolean;
   summary: string;
 }
 
@@ -305,8 +304,6 @@ export interface AppHealthSnapshot {
   ok: true;
   loadedAt: string;
   bots: string[];
-  websocket: Record<string, BotWebSocketHealth>;
   botHealth: Record<string, BotIngressHealth>;
-  degraded: boolean;
   ready: boolean;
 }

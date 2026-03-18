@@ -117,6 +117,7 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 
 - Send `/help` to get a concise command reference for the bot text interface.
 - Send `/server health` to get an informational health summary for the running service, active bots, ingress mode, and per-bot ingress availability.
+- Send `/server version` to get the current running or installed version.
 - Send `/tasks` to get an informational catalog of one-shot tasks for the current bot.
 - Bots only expose `/run sc` when they explicitly configure task `sc`; when enabled, it captures the current screen and returns the image to the same chat after confirmation.
 - Bots only expose `/server update` when they explicitly configure task `update`; when enabled, it checks the latest stable GitHub Release and hands the refresh phase off to a detached one-shot helper so the running service can be safely replaced without killing the update executor.
@@ -136,6 +137,7 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 
 - [`kfc`](kfc) is the primary local admin entrypoint.
 - `./kfc health` fetches the running service's configured loopback health endpoint and prints the canonical health snapshot.
+- `./kfc version` prints the current running or installed version label.
 - `./kfc update` checks the latest stable GitHub Release against the locally installed release metadata, persists a restart-safe handoff record, and schedules a detached one-shot helper to perform the managed-service refresh.
 - `./kfc update --yes` performs the same release-based update workflow non-interactively once install metadata and the latest stable release are usable.
 - `./kfc rollback` checks whether `app.previous` and matching install metadata are available, then schedules the same detached helper pattern to perform the rollback refresh safely across service replacement.
@@ -160,7 +162,7 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 - `service_reconnected` is emitted from the per-bot heartbeat evaluator, not directly from reconnect/disconnect state churn.
 - The heartbeat evaluator runs once per minute and uses the same WebSocket-ingress-aware availability predicate exposed by `/server health`.
 - A successful availability check can come from either a connected WebSocket transport or a recent WebSocket-delivered ingress observation for that bot.
-- Health output includes the bot's WebSocket transport state, recent WebSocket ingress observations, active ingress transport, degraded state, and effective availability.
+- Health output includes the bot's WebSocket transport state, recent WebSocket ingress observations, active ingress transport, and effective availability.
 - Exceeding the reconnect-failure threshold does not automatically switch Feishu subscription mode. The warning is operator guidance only.
 - Process shutdown intentionally closes bot WebSocket clients and does not attempt replacement connections.
 - Configuration reload intentionally retires old bot runtimes and explicitly starts replacement WebSocket clients for the new active bot set.

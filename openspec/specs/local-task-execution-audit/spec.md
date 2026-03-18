@@ -4,39 +4,35 @@ Define the local execution, persistence, audit, lifecycle, and service-managemen
 ### Requirement: Bot WebSocket health and effective ingress availability are observable
 The system SHALL expose bot-scoped ingress health so operators can distinguish process availability, primary WebSocket transport health, recent WebSocket ingress observations, and effective bot serviceability.
 
-#### Scenario: Health endpoint reports WebSocket-based readiness
-- **WHEN** the running service publishes health data for a bot
-- **THEN** the health or diagnostic surface reports that bot as ready only when current serviceability can be proven through long-connection WebSocket transport or recent WebSocket-delivered ingress observation
-- **AND** it does not reference webhook fallback availability because webhook event delivery is no longer supported
-
-#### Scenario: Health endpoint reports degraded-but-available WebSocket ingress
-- **WHEN** a bot's WebSocket transport is reconnecting or disconnected
-- **AND** recent WebSocket-delivered events have been observed for that bot inside the shared recency window
-- **THEN** the health or diagnostic surface reports that bot as available
-- **AND** it marks the bot as degraded
-- **AND** it identifies WebSocket as the active ingress transport for that bot
-
-#### Scenario: Health endpoint reports unavailable bot when WebSocket evidence is absent
-- **WHEN** a bot's WebSocket transport is not connected
-- **AND** no recent WebSocket ingress observations exist for that bot inside the shared recency window
-- **THEN** the health or diagnostic surface reports that bot as unavailable
-- **AND** it does not reference webhook history because webhook ingress is unsupported
-
-#### Scenario: Health is available through HTTP, CLI, and Feishu command surfaces
+#### Scenario: Canonical health uses per-bot WebSocket diagnostics only
 - **WHEN** the running service publishes health data
-- **THEN** HTTP `/health`, `kfc health`, and the authorized Feishu `/server health` command all expose the same canonical per-bot availability facts
-- **AND** HTTP and CLI expose the full canonical JSON model
-- **AND** Feishu exposes a summarized view derived from that same canonical model rather than a separate health implementation
+- **THEN** the canonical health JSON exposes WebSocket diagnostics under `botHealth.<id>.websocket`
+- **AND** it does not duplicate those same diagnostics in a top-level `websocket` map
 
-#### Scenario: Reconnect notifications use the same WebSocket-only availability standard as health
-- **WHEN** the service evaluates whether a bot has recovered after a prolonged absence of successful ingress checks
-- **THEN** it uses the same WebSocket-ingress-aware `ingressAvailable` predicate that drives health readiness and bot availability
-- **AND** it does not maintain webhook-based recovery semantics
+#### Scenario: WebSocket state is transport-diagnostic rather than serviceability verdict
+- **WHEN** the health surface exposes `botHealth.<id>.websocket.state`
+- **THEN** that field represents inferred long-connection transport lifecycle state
+- **AND** effective serviceability is still determined by `botHealth.<id>.availability`
 
-#### Scenario: WebSocket ingress observations remain visible for diagnostics
-- **WHEN** the service observes WebSocket-delivered Feishu events for a bot
-- **THEN** it records the latest WebSocket event timestamp and type for that bot
-- **AND** the canonical health output exposes those observations so operators can correlate real ingress activity with degraded transport state
+#### Scenario: Reconnection success updates transport state
+- **WHEN** the Feishu SDK emits connection-success or reconnect-success lifecycle signals for a bot's long connection
+- **THEN** the service updates `botHealth.<id>.websocket.state` to `connected`
+- **AND** it does not remain stuck in `reconnecting` solely because reconnect success was observed only through connection-level debug signals
+
+#### Scenario: Non-connection debug traffic does not become operator-visible by default
+- **WHEN** the service enables the Feishu SDK debug stream needed to infer connection lifecycle state
+- **THEN** it may still filter or suppress non-connection debug logs from operator-visible output
+- **AND** it does not rely on dumping all SDK debug payload logs to preserve `websocket.state`
+
+#### Scenario: Development mode retains full SDK debug visibility
+- **WHEN** the service runs in development mode while consuming Feishu SDK debug signals for connection-state inference
+- **THEN** local debugging still has access to the full SDK debug stream, including payload-oriented event logs
+- **AND** this development visibility does not change the canonical meaning of `websocket.state`
+
+#### Scenario: Health no longer exposes degraded as a separate verdict
+- **WHEN** the running service publishes health data
+- **THEN** the canonical health model does not include a separate `degraded` field
+- **AND** operators derive nuance from availability plus WebSocket transport diagnostics instead
 
 ### Requirement: The `sc` oneshot task captures the current screen and returns it through Feishu
 The system SHALL support a configured oneshot task `sc`, backed by the builtin-tool `screencapture`, that captures the current macOS screen, stores the image temporarily on disk, sends it back through the Feishu SDK to the originating chat, and removes the temporary file after successful delivery.
@@ -886,3 +882,4 @@ The project SHALL provide a repeatable release packaging workflow that produces 
 - **THEN** it verifies the asset contains `.kfc-release.json`
 - **AND** it verifies required runtime entrypoints such as `src/index.ts`, `src/kfc.ts`, and `package.json`
 - **AND** it verifies the embedded `asset_name` matches the tarball filename
+

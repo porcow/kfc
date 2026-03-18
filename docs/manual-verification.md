@@ -24,12 +24,13 @@
 1. Send `/help` from an allowed Feishu user and confirm the reply lists `/server health`, `/server update`, `/server rollback`, `/tasks`, `/run TASK_ID key=value ...`, `/run-status RUN_ID`, `/cancel RUN_ID`, and `/reload`.
 2. Confirm the `/help` reply does not duplicate the full task catalog and instead points the user to `/tasks`.
 3. Send `/server health` from an allowed Feishu user and confirm the reply summarizes service readiness, active bot IDs, and each bot's availability / active ingress state.
-4. Under long-connection mode, if the bot is still responding while WebSocket transport state is degraded, confirm `/server health` can still show the bot as available via recent WebSocket ingress rather than reporting a false unavailable state.
-5. Confirm every human-facing timestamp shown in Feishu cards or replies uses `YYYY/MM/DD HH:mm:ss` rather than mixed ISO strings.
-6. Confirm `service_online` is emitted only once after the bot first reaches `connected` in the current main-service process session.
-7. Confirm `service_reconnected` is not emitted for short reconnect churn, and is emitted only after a successful availability heartbeat occurs following a gap greater than the configured threshold under the active ingress mode.
-8. Send `/tasks` from an allowed Feishu user in bot A and confirm bot A's one-shot task list card arrives.
-9. Send `/tasks` from an allowed Feishu user in bot B and confirm bot B's task list is different if configured differently.
+4. Send `/server version` from an allowed Feishu user and confirm the reply shows the current running or installed version label.
+5. Under long-connection mode, if the bot is still responding while WebSocket transport state is reconnecting, confirm `/server health` can still show the bot as available via recent WebSocket ingress rather than reporting a false unavailable state.
+6. Confirm every human-facing timestamp shown in Feishu cards or replies uses `YYYY/MM/DD HH:mm:ss` rather than mixed ISO strings.
+7. Confirm `service_online` is emitted only once after the bot first reaches `connected` in the current main-service process session.
+8. Confirm `service_reconnected` is not emitted for short reconnect churn, and is emitted only after a successful availability heartbeat occurs following a gap greater than the configured threshold under the active ingress mode.
+9. Send `/tasks` from an allowed Feishu user in bot A and confirm bot A's one-shot task list card arrives.
+10. Send `/tasks` from an allowed Feishu user in bot B and confirm bot B's task list is different if configured differently.
 10. For a bot that explicitly configures task `sc`, send `/run sc` from an allowed Feishu user and confirm:
    - the bot returns the normal confirmation card rather than using a dedicated `/sc` shortcut
    - confirming the request captures the current screen and sends the screenshot image back to the same chat
@@ -120,23 +121,24 @@
 ## Local CLI Checks
 
 1. Run `./kfc exec --bot ops --task echo-tool` and confirm the task executes locally using its config-defined default parameters, or reports a validation error if the task requires parameters without defaults.
-2. Run `./kfc health` and confirm it returns the same ingress mode, readiness, degraded state, and per-bot ingress availability model as HTTP `/health`.
-3. Run `./kfc update` on a release-based install that is already current and confirm it reports the current version without prompting for installation.
-4. Run `./kfc update` when a newer latest stable release is available and confirm it prompts before handoff, schedules a detached helper, eventually refreshes the managed service, and updates `~/.local/share/kfc/install-metadata.json`.
-5. Force a service refresh failure after the new app has been activated and confirm `./kfc update` first attempts automatic restoration of the previous version and reports that restored version when recovery succeeds.
-6. Run `./kfc rollback` when `app.previous` exists and confirm it prompts before handoff, schedules the detached helper, and then reports the restored current version.
-7. Run `./kfc rollback --yes` and confirm it skips confirmation but still blocks missing `app.previous` or unusable install metadata.
-8. Confirm `~/Library/LaunchAgents/com.kidsalfred.service.plist` exists after `./kfc service install --config /path/to/bot.toml`.
-9. Run `./kfc service restart` and confirm the managed main service restarts successfully.
-10. Run `./kfc service stop` and confirm the managed main service stops without changing long-term cronjob policy.
-11. While the plist is still installed, run `./kfc service start` and confirm the managed main service starts successfully.
-12. Run `./kfc service uninstall` and confirm the managed main service is removed from launchd management, all configured bot-scoped cronjobs are unloaded from launchd, their cron plist files are deleted, and `~/Library/LaunchAgents/com.kidsalfred.service.plist` is deleted.
-13. Reinstall a cronjob-enabled config, manually delete `~/Library/LaunchAgents/com.kidsalfred.service.plist` while leaving one or more bot cron plists under `~/.kfc/**/launchd/`, then run `./kfc service uninstall` and confirm the orphaned cronjobs are still unloaded from launchd and their plist files are deleted by fallback scanning.
-14. After uninstall, run `./kfc service start`, `./kfc service restart`, and `./kfc service stop` separately and confirm each returns a clear "service is not installed" style error.
-15. Reinstall the service if needed, then run `./kfc uninstall`, answer anything other than `y`/`yes`, and confirm no files are removed.
-16. Run `./kfc uninstall --yes` and confirm the installed app tree, launcher, `~/.kfc`, main-service plist, and configured cronjob launchd state are removed while the default config is preserved.
-17. Run `./kfc uninstall --yes --delete-config` and confirm the default config is removed as well.
-18. Reinstall if needed, then run `KFC_DELETE_CONFIG=true ./uninstall.sh` and confirm the script deletes the default config only when explicitly opted in.
+2. Run `./kfc health` and confirm it returns the same readiness, per-bot WebSocket diagnostics, and ingress availability model as HTTP `/health`.
+3. Run `./kfc version` and confirm it prints the current running or installed version label.
+4. Run `./kfc update` on a release-based install that is already current and confirm it reports the current version without prompting for installation.
+5. Run `./kfc update` when a newer latest stable release is available and confirm it prompts before handoff, schedules a detached helper, eventually refreshes the managed service, and updates `~/.local/share/kfc/install-metadata.json`.
+6. Force a service refresh failure after the new app has been activated and confirm `./kfc update` first attempts automatic restoration of the previous version and reports that restored version when recovery succeeds.
+7. Run `./kfc rollback` when `app.previous` exists and confirm it prompts before handoff, schedules the detached helper, and then reports the restored current version.
+8. Run `./kfc rollback --yes` and confirm it skips confirmation but still blocks missing `app.previous` or unusable install metadata.
+9. Confirm `~/Library/LaunchAgents/com.kidsalfred.service.plist` exists after `./kfc service install --config /path/to/bot.toml`.
+10. Run `./kfc service restart` and confirm the managed main service restarts successfully.
+11. Run `./kfc service stop` and confirm the managed main service stops without changing long-term cronjob policy.
+12. While the plist is still installed, run `./kfc service start` and confirm the managed main service starts successfully.
+13. Run `./kfc service uninstall` and confirm the managed main service is removed from launchd management, all configured bot-scoped cronjobs are unloaded from launchd, their cron plist files are deleted, and `~/Library/LaunchAgents/com.kidsalfred.service.plist` is deleted.
+14. Reinstall a cronjob-enabled config, manually delete `~/Library/LaunchAgents/com.kidsalfred.service.plist` while leaving one or more bot cron plists under `~/.kfc/**/launchd/`, then run `./kfc service uninstall` and confirm the orphaned cronjobs are still unloaded from launchd and their plist files are deleted by fallback scanning.
+15. After uninstall, run `./kfc service start`, `./kfc service restart`, and `./kfc service stop` separately and confirm each returns a clear "service is not installed" style error.
+16. Reinstall the service if needed, then run `./kfc uninstall`, answer anything other than `y`/`yes`, and confirm no files are removed.
+17. Run `./kfc uninstall --yes` and confirm the installed app tree, launcher, `~/.kfc`, main-service plist, and configured cronjob launchd state are removed while the default config is preserved.
+18. Run `./kfc uninstall --yes --delete-config` and confirm the default config is removed as well.
+19. Reinstall if needed, then run `KFC_DELETE_CONFIG=true ./uninstall.sh` and confirm the script deletes the default config only when explicitly opted in.
 
 ## Release Packaging Checks
 

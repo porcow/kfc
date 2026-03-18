@@ -4,66 +4,11 @@ Define the Feishu-facing command, card, and reply behavior for task discovery, e
 ### Requirement: Authorized users can discover tasks and start runs from Feishu text commands
 The system SHALL allow an authorized Feishu user to request the list of available tasks from Feishu, inspect service health, and start task execution flows by sending structured text commands over the supported long-connection integration.
 
-#### Scenario: Authorized user requests command help
-- **WHEN** a Feishu user in the allowed user list invokes the bot help command
-- **THEN** the system returns an informational help response that documents the supported text commands
-- **AND** the help response includes at least `/server health`, `/server update`, `/server rollback`, `/tasks`, `/run TASK_ID key=value ...`, `/cron list`, `/cron start TASK_ID`, `/cron stop TASK_ID`, `/cron status`, `/run-status RUN_ID`, `/cancel RUN_ID`, and `/reload`
-- **AND** the help response only references `/run sc` when the current bot has explicitly configured task `sc`
-- **AND** the help response directs the user to `/tasks` for task-specific example commands rather than duplicating the full task catalog
-
 #### Scenario: Authorized user requests bot health
 - **WHEN** a Feishu user in the allowed user list sends `/server health`
-- **THEN** the system returns an informational response that summarizes service readiness, each bot's effective availability, and WebSocket ingress diagnostics
-- **AND** it does not reference webhook fallback mode or webhook observation fields
-
-#### Scenario: Authorized user requests a screen capture through the standard run flow
-- **WHEN** a Feishu user in the allowed user list sends `/run sc`
-- **AND** the current bot has explicitly configured task `sc`
-- **THEN** the system treats `sc` as a configured oneshot task
-- **AND** it follows the standard confirmation flow before execution
-- **AND** after confirmation it delivers the resulting screenshot back to the same Feishu chat where the command was issued
-
-#### Scenario: Authorized user requests self-update through the service command flow
-- **WHEN** an authorized Feishu user sends `/server update`
-- **AND** the current bot has explicitly configured task `update`
-- **THEN** the system routes the request into the same configured oneshot self-update task workflow previously used by `/run update`
-- **AND** it follows the standard confirmation flow before execution
-
-#### Scenario: Authorized user requests service rollback through the service command flow
-- **WHEN** an authorized Feishu user sends `/server rollback`
-- **AND** the current bot has explicitly configured task `rollback`
-- **THEN** the system routes the request into the same configured oneshot rollback task workflow previously used by `/run rollback`
-- **AND** it follows the standard confirmation flow before execution
-
-#### Scenario: Authorized user requests the task list
-- **WHEN** a Feishu user in the allowed user list invokes the bot's task-list action
-- **THEN** the system returns the predefined one-shot tasks that are available to that user with their descriptions
-- **AND** the returned card includes an example command string for each listed task
-- **AND** task `sc` appears only when the current bot has explicitly configured it
-
-#### Scenario: Bot omits explicit `update` task configuration
-- **WHEN** a bot does not declare task `update`
-- **THEN** `/server update` is rejected as unavailable for that bot
-- **AND** `/help` and `/tasks` do not advertise service update as an available action
-
-#### Scenario: Bot omits explicit `rollback` task configuration
-- **WHEN** a bot does not declare task `rollback`
-- **THEN** `/server rollback` is rejected as unavailable for that bot
-- **AND** `/help` and `/tasks` do not advertise service rollback as an available action
-
-#### Scenario: Unauthorized user requests the task list
-- **WHEN** a Feishu user outside the allowed user list invokes the bot's task-list action
-- **THEN** the system refuses the request and returns an authorization failure message without exposing task details
-
-#### Scenario: Unauthorized user receives a pairing command
-- **WHEN** a Feishu user outside the allowed user list sends a supported command or card action
-- **THEN** the system returns an authorization card that includes a one-time pairing code in the form `<bot_id>-<6 random alphanumeric characters>` and the exact local admin command `kfc pair <pair_code>`
-- **AND** the authorization card does not expose the task catalog or task details
-
-#### Scenario: Newly paired user can retry immediately
-- **WHEN** a local administrator completes `kfc pair <pair_code>` successfully for a pending unauthorized user
-- **THEN** that user can retry the original Feishu interaction without waiting for process restart
-- **AND** subsequent authorized requests are evaluated against the updated `allowed_users`
+- **THEN** the system returns an informational response that summarizes readiness, each bot's effective availability, and WebSocket transport diagnostics
+- **AND** it does not render a separate `Degraded` field
+- **AND** it treats `websocket.state` as transport detail rather than the final availability verdict
 
 ### Requirement: Requests are routed to the correct bot instance
 The system SHALL route each inbound Feishu event or callback to the bot instance identified by the bot-scoped WebSocket session and SHALL keep bot credentials and task catalogs isolated from each other.
@@ -323,3 +268,4 @@ The system SHALL preserve its Feishu command, card, messaging, and upload behavi
 #### Scenario: Bun-only runtime preserves Feishu command handling
 - **WHEN** the service handles Feishu text commands, long-connection card actions, and result delivery under the supported runtime
 - **THEN** the system preserves the existing Feishu-facing behavior for task execution, status cards, health replies, and uploads
+

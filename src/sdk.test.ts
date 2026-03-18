@@ -13,6 +13,7 @@ import {
   extractCardActionPayload,
   FeishuRunUpdateSink,
   FeishuTaskResultSink,
+  shouldEmitSdkDebugLog,
   processServiceHeartbeat,
   processServiceConnectionTransition,
 } from './feishu/sdk.ts';
@@ -670,6 +671,35 @@ test('websocket health transitions track reconnect failures and successful recov
   assert.equal(recovered.lastError, undefined);
 });
 
+test('websocket health treats reconnect success as connected recovery', () => {
+  const base = {
+    state: 'reconnecting' as const,
+    consecutiveReconnectFailures: 2,
+    lastError: 'connect failed',
+  };
+
+  const recovered = applyWebSocketLogEvent(base, 'debug', ['[ws]', 'reconnect success'], {
+    now: '2026-03-12T12:05:00.000Z',
+  });
+
+  assert.equal(recovered.state, 'connected');
+  assert.equal(recovered.consecutiveReconnectFailures, 0);
+  assert.equal(recovered.lastConnectedAt, '2026-03-12T12:05:00.000Z');
+  assert.equal(recovered.lastError, undefined);
+});
+
+test('websocket health counts ws connect failed as reconnect failure', () => {
+  const base = {
+    state: 'reconnecting' as const,
+    consecutiveReconnectFailures: 0,
+  };
+
+  const failed = applyWebSocketLogEvent(base, 'error', ['[ws]', 'ws connect failed']);
+  assert.equal(failed.state, 'reconnecting');
+  assert.equal(failed.consecutiveReconnectFailures, 1);
+  assert.match(failed.lastError ?? '', /ws connect failed/u);
+});
+
 test('websocket health ignores reconnect transition after manual close', () => {
   const base = {
     state: 'disconnected' as const,
@@ -681,6 +711,42 @@ test('websocket health ignores reconnect transition after manual close', () => {
   });
   assert.equal(afterClose.state, 'disconnected');
   assert.equal(afterClose.consecutiveReconnectFailures, 2);
+});
+
+test('managed runtime filters non-connection sdk debug logs but keeps connection lifecycle logs', () => {
+  assert.equal(
+    shouldEmitSdkDebugLog('debug', ['[ws]', 'receive message, message_type: event; data: {"text":"hi"}'], {
+      developmentRuntime: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldEmitSdkDebugLog('debug', ['[ws]', 'reconnect success'], {
+      developmentRuntime: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldEmitSdkDebugLog('trace', ['[ws]', 'ping success'], {
+      developmentRuntime: false,
+    }),
+    false,
+  );
+});
+
+test('development runtime keeps full sdk debug visibility', () => {
+  assert.equal(
+    shouldEmitSdkDebugLog('debug', ['[ws]', 'receive message, message_type: event; data: {"text":"hi"}'], {
+      developmentRuntime: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldEmitSdkDebugLog('trace', ['[ws]', 'ping success'], {
+      developmentRuntime: true,
+    }),
+    true,
+  );
 });
 
 test('service connection transition emits a session-scoped online notification to allowlist subscribers', async () => {

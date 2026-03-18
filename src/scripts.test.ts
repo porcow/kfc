@@ -32,7 +32,7 @@ test('repository kfc wrapper invokes the CLI entrypoint', async () => {
       assert.equal(error.code, 1);
       assert.match(
         error.stderr ?? '',
-        /Usage: kfc <service\|health\|update\|rollback\|pair\|exec\|uninstall> \.\.\./u,
+        /Usage: kfc <service\|health\|version\|update\|rollback\|pair\|exec\|uninstall> \.\.\./u,
       );
       return true;
     },

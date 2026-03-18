@@ -24,20 +24,6 @@ test('buildHealthSnapshot returns the canonical health payload shape', () => {
     ok: true,
     loadedAt: '2026-03-14T08:00:00.000Z',
     bots: ['alpha', 'beta'],
-    degraded: true,
-    websocket: {
-      alpha: {
-        state: 'connected',
-        consecutiveReconnectFailures: 0,
-        stale: true,
-      },
-      beta: {
-        state: 'reconnecting',
-        consecutiveReconnectFailures: 2,
-        nextReconnectAt: '2026-03-14T08:05:00.000Z',
-        stale: true,
-      },
-    },
     botHealth: {
       alpha: {
         websocket: {
@@ -48,7 +34,6 @@ test('buildHealthSnapshot returns the canonical health payload shape', () => {
         availability: {
           ingressAvailable: true,
           activeIngress: 'websocket',
-          degraded: false,
           summary: 'Available via WebSocket',
         },
       },
@@ -62,7 +47,6 @@ test('buildHealthSnapshot returns the canonical health payload shape', () => {
         availability: {
           ingressAvailable: false,
           activeIngress: 'unknown',
-          degraded: true,
           summary: 'Unavailable',
         },
       },
@@ -71,7 +55,7 @@ test('buildHealthSnapshot returns the canonical health payload shape', () => {
   });
 });
 
-test('buildHealthSnapshot treats recent websocket ingress as degraded availability in websocket-only mode', () => {
+test('buildHealthSnapshot treats recent websocket ingress as available availability in websocket-only mode', () => {
   const snapshot = buildHealthSnapshot({
     getLoadedAt: () => '2026-03-17T09:40:00.000Z',
     listBotIds: () => ['alpha'],
@@ -87,11 +71,9 @@ test('buildHealthSnapshot treats recent websocket ingress as degraded availabili
   });
 
   assert.equal(snapshot.ready, true);
-  assert.equal(snapshot.degraded, true);
   assert.deepEqual(snapshot.botHealth.alpha.availability, {
     ingressAvailable: true,
     activeIngress: 'websocket',
-    degraded: true,
     summary: 'Available via WebSocket ingress while transport state is reconnecting',
   });
 });

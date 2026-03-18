@@ -5,3 +5,4 @@ data/
 *.sqlite-wal
 npm-debug.log*
 .codex/
+openspec/changes/archive/

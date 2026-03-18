@@ -345,10 +345,17 @@ test('service returns a task-agnostic help card for authorized users', async () 
     ok: true,
     loadedAt: '2026-03-14T08:00:00.000Z',
     bots: ['alpha'],
-    websocket: {
+    botHealth: {
       alpha: {
-        state: 'connected',
-        consecutiveReconnectFailures: 0,
+        websocket: {
+          state: 'connected',
+          consecutiveReconnectFailures: 0,
+        },
+        availability: {
+          ingressAvailable: true,
+          activeIngress: 'websocket',
+          summary: 'Available via WebSocket',
+        },
       },
     },
     ready: true,
@@ -360,6 +367,7 @@ test('service returns a task-agnostic help card for authorized users', async () 
   assert.equal(help.type, 'card');
   assert.ok(helpJson.includes('Available commands'));
   assert.ok(helpJson.includes('/server health'));
+  assert.ok(helpJson.includes('/server version'));
   assert.ok(helpJson.includes('/tasks'));
   assert.ok(helpJson.includes('/run TASK_ID key=value ...'));
   assert.ok(helpJson.includes('/run-status RUN_ID'));
@@ -373,6 +381,22 @@ test('service returns a task-agnostic help card for authorized users', async () 
 
   const unsupported = await service.handleMessage('operator-1', '/unknown');
   assert.ok(JSON.stringify(unsupported.card).includes('Unsupported command'));
+
+  await service.close();
+});
+
+test('service returns current version for authorized users', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-version-command-'));
+  const databasePath = join(directory, 'runs.sqlite');
+  const service = new KidsAlfredService(createBotConfig('alpha', databasePath));
+  service.setVersionProvider(async () => 'v0.1.3');
+
+  const version = await service.handleMessage('operator-1', '/server version', { chatId: 'chat-version-1' });
+  const versionJson = JSON.stringify(version.card);
+
+  assert.equal(version.type, 'card');
+  assert.ok(versionJson.includes('Service version'));
+  assert.ok(versionJson.includes('v0.1.3'));
 
   await service.close();
 });
@@ -437,7 +461,6 @@ test('service returns health from the shared snapshot for authorized users', asy
     ok: true,
     loadedAt: '2026-03-14T08:00:00.000Z',
     bots: ['alpha', 'beta'],
-    degraded: true,
     botHealth: {
       alpha: {
         websocket: {
@@ -447,7 +470,6 @@ test('service returns health from the shared snapshot for authorized users', asy
         availability: {
           ingressAvailable: true,
           activeIngress: 'websocket',
-          degraded: false,
           summary: 'Available via WebSocket',
         },
       },
@@ -462,7 +484,6 @@ test('service returns health from the shared snapshot for authorized users', asy
         availability: {
           ingressAvailable: true,
           activeIngress: 'websocket',
-          degraded: true,
           summary: 'Available via WebSocket ingress while transport state is reconnecting',
         },
       },
@@ -478,7 +499,6 @@ test('service returns health from the shared snapshot for authorized users', asy
   assert.ok(healthJson.includes('Ready: **true**'));
   assert.ok(healthJson.includes('Available: **true**'));
   assert.ok(healthJson.includes('Active ingress: **websocket**'));
-  assert.ok(healthJson.includes('Degraded: **true**'));
   assert.ok(healthJson.includes('alpha'));
   assert.ok(healthJson.includes('beta'));
   assert.ok(healthJson.includes('reconnecting'));

@@ -29,7 +29,6 @@ export function buildAvailability(websocket: BotWebSocketHealth): BotAvailabilit
     return {
       ingressAvailable: true,
       activeIngress: 'websocket',
-      degraded: websocket.state !== 'connected',
       summary:
         websocket.state === 'connected'
           ? 'Available via WebSocket'
@@ -42,7 +41,6 @@ export function buildAvailability(websocket: BotWebSocketHealth): BotAvailabilit
     return {
       ingressAvailable,
       activeIngress: 'websocket',
-      degraded: false,
       summary: 'Available via WebSocket',
     };
   }
@@ -50,7 +48,6 @@ export function buildAvailability(websocket: BotWebSocketHealth): BotAvailabilit
   return {
     ingressAvailable: false,
     activeIngress: 'unknown',
-    degraded: true,
     summary: UNAVAILABLE_SUMMARY,
   };
 }
@@ -80,11 +77,7 @@ export function buildHealthSnapshot(source: HealthSnapshotSource): AppHealthSnap
     ok: true,
     loadedAt: source.getLoadedAt(),
     bots: source.listBotIds(),
-    websocket: Object.fromEntries(
-      Object.entries(botHealth).map(([botId, health]) => [botId, health.websocket]),
-    ),
     botHealth,
-    degraded: Object.values(botHealth).some((health) => health.availability.degraded),
     ready: Object.values(botHealth).every((health) => health.availability.ingressAvailable),
   };
 }

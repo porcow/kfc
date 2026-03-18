@@ -244,6 +244,9 @@ export function buildHelpCard(
     '`/server health`',
     'Show service readiness and per-bot WebSocket health.',
     '',
+    '`/server version`',
+    'Show the current running or installed version.',
+    '',
     '`/tasks`',
     'List available tasks and their example commands.',
     '',
@@ -301,7 +304,6 @@ function formatHealthDetails(snapshot: AppHealthSnapshot): string {
           `- **${botId}**`,
           `  - Available: **${health?.availability.ingressAvailable ? 'true' : 'false'}**`,
           `  - Active ingress: **${health?.availability.activeIngress ?? 'unknown'}**`,
-          `  - Degraded: **${health?.availability.degraded ? 'true' : 'false'}**`,
           `  - WebSocket: **${health?.websocket.state ?? 'unknown'}**`,
           health?.websocket.lastConnectedAt
             ? `  - Last connected: \`${formatFeishuTimestamp(health.websocket.lastConnectedAt)}\``
@@ -325,7 +327,6 @@ function formatHealthDetails(snapshot: AppHealthSnapshot): string {
 
   return [
     `Ready: **${snapshot.ready ? 'true' : 'false'}**`,
-    `Degraded: **${snapshot.degraded ? 'true' : 'false'}**`,
     `Loaded at: \`${formatFeishuTimestamp(snapshot.loadedAt)}\``,
     '',
     '**Bots**',
@@ -337,6 +338,13 @@ export function buildHealthCard(snapshot: AppHealthSnapshot): CardResponse {
   return {
     type: 'card',
     card: baseCard('Service health', [buildMarkdown(formatHealthDetails(snapshot))]),
+  };
+}
+
+export function buildVersionCard(version: string): CardResponse {
+  return {
+    type: 'card',
+    card: baseCard('Service version', [buildMarkdown(`Current version: \`${version}\``)]),
   };
 }
 

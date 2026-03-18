@@ -383,12 +383,12 @@ test('health endpoint reports bot-scoped websocket health', async () => {
 
   const payload = JSON.parse(body) as Record<string, any>;
   assert.deepEqual(payload.bots, ['alpha', 'beta']);
-  assert.equal(payload.websocket.alpha.state, 'connected');
-  assert.equal(payload.websocket.beta.state, 'connected');
+  assert.equal(payload.botHealth.alpha.websocket.state, 'connected');
+  assert.equal(payload.botHealth.beta.websocket.state, 'connected');
   await manager.close();
 });
 
-test('health endpoint distinguishes degraded websocket ingress and surfaces warnings', async () => {
+test('health endpoint distinguishes websocket ingress availability and surfaces warnings', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-health-warning-'));
   const configPath = join(directory, 'bots.toml');
   await writeFile(configPath, multiBotConfigText(directory));
@@ -438,9 +438,9 @@ test('health endpoint distinguishes degraded websocket ingress and surfaces warn
 
   const payload = JSON.parse(body) as Record<string, any>;
   assert.equal(payload.ready, false);
-  assert.equal(payload.websocket.alpha.state, 'reconnecting');
-  assert.match(payload.websocket.alpha.warning, /long connection/u);
-  assert.equal(payload.websocket.beta.state, 'connected');
+  assert.equal(payload.botHealth.alpha.websocket.state, 'reconnecting');
+  assert.match(payload.botHealth.alpha.websocket.warning, /long connection/u);
+  assert.equal(payload.botHealth.beta.websocket.state, 'connected');
 
   await manager.close();
 });

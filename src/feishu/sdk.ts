@@ -179,6 +179,9 @@ interface MessageTarget {
 }
 
 const RECONNECT_WARNING_THRESHOLD = 3;
+const CONNECTION_SUCCESS_PATTERNS = ['ws connect success', 'ws client ready', 'reconnect success'] as const;
+const CONNECTION_RECONNECT_FAILURE_PATTERNS = ['connect failed', 'ws connect failed'] as const;
+const CONNECTION_DEBUG_PATTERNS = [...CONNECTION_SUCCESS_PATTERNS, 'client closed'] as const;
 
 function stringifyLogMessage(message: unknown): string {
   if (typeof message === 'string') {
@@ -215,6 +218,29 @@ function withWarning(health: BotWebSocketHealth): BotWebSocketHealth {
   };
 }
 
+function containsAny(text: string, patterns: readonly string[]): boolean {
+  return patterns.some((pattern) => text.includes(pattern));
+}
+
+export function isDevelopmentRuntime(): boolean {
+  return process.execArgv.includes('--watch');
+}
+
+export function shouldEmitSdkDebugLog(
+  level: 'debug' | 'trace',
+  messages: unknown[],
+  options: { developmentRuntime?: boolean } = {},
+): boolean {
+  if (options.developmentRuntime ?? isDevelopmentRuntime()) {
+    return true;
+  }
+  if (level === 'trace') {
+    return false;
+  }
+  const text = messages.map(stringifyLogMessage).join(' ');
+  return containsAny(text, CONNECTION_DEBUG_PATTERNS);
+}
+
 export function applyWebSocketLogEvent(
   health: BotWebSocketHealth,
   level: 'error' | 'warn' | 'info' | 'debug' | 'trace',
@@ -225,11 +251,7 @@ export function applyWebSocketLogEvent(
   const now = options.now ?? new Date().toISOString();
   const text = messages.map(stringifyLogMessage).join(' ');
 
-  if (
-    level === 'info' &&
-    text.includes('ws client ready') ||
-    level === 'debug' && text.includes('ws connect success')
-  ) {
+  if ((level === 'info' || level === 'debug') && containsAny(text, CONNECTION_SUCCESS_PATTERNS)) {
     return {
       ...health,
       state: 'connected',
@@ -240,7 +262,7 @@ export function applyWebSocketLogEvent(
     };
   }
 
-  if (level === 'info' && text.includes('reconnect') && !manuallyClosed) {
+  if (level === 'info' && text.includes('reconnect') && !text.includes('reconnect success') && !manuallyClosed) {
     return {
       ...health,
       state: 'reconnecting',
@@ -254,7 +276,7 @@ export function applyWebSocketLogEvent(
     };
   }
 
-  if (level === 'error' && text.includes('connect failed') && !text.includes('ws connect failed')) {
+  if (level === 'error' && containsAny(text, CONNECTION_RECONNECT_FAILURE_PATTERNS)) {
     return {
       ...health,
       state: 'reconnecting',
@@ -556,6 +578,9 @@ function detectMessageCommandType(text: string): string {
   if (trimmed === '/server health') {
     return 'health';
   }
+  if (trimmed === '/server version') {
+    return 'version';
+  }
   if (trimmed === '/server update') {
     return 'server_update';
   }
@@ -745,6 +770,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       await processServiceHeartbeat(service, client, now, { ...webSocketHealth });
     });
   };
+  const developmentRuntime = isDevelopmentRuntime();
   const wsLogger = {
     error: (...messages: unknown[]) => {
       console.error(...messages);
@@ -772,7 +798,9 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       handleConnectionTransition(previousHealth, nextHealth, now);
     },
     debug: (...messages: unknown[]) => {
-      console.debug(...messages);
+      if (shouldEmitSdkDebugLog('debug', messages, { developmentRuntime })) {
+        console.debug(...messages);
+      }
       const now = new Date().toISOString();
       const previousHealth = { ...webSocketHealth };
       const nextHealth = applyWebSocketLogEvent(webSocketHealth, 'debug', messages, {
@@ -783,7 +811,9 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       handleConnectionTransition(previousHealth, nextHealth, now);
     },
     trace: (...messages: unknown[]) => {
-      console.debug(...messages);
+      if (shouldEmitSdkDebugLog('trace', messages, { developmentRuntime })) {
+        console.debug(...messages);
+      }
     },
   };
   const client = new sdk.Client(baseConfig);
@@ -815,7 +845,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       webSocketHealth.state = 'connecting';
       wsClient = new sdk.WSClient({
         ...baseConfig,
-        loggerLevel: sdk.LoggerLevel.info,
+        loggerLevel: sdk.LoggerLevel.debug,
         logger: wsLogger,
       });
       await wsClient.start({ eventDispatcher });

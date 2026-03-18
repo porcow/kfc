@@ -36,6 +36,7 @@ import type {
 import { authorizePairing, invokeLocalReload } from './pairing.ts';
 import { createBuiltinToolRegistry } from './tools/index.ts';
 import { RunRepository } from './persistence/run-repository.ts';
+import { readCurrentVersionLabel } from './version.ts';
 
 export { LaunchdServiceManager } from './service-manager.ts';
 
@@ -46,6 +47,7 @@ export interface KfcCliDeps {
   pairAuthorizer: (pairCode: string) => Promise<{ actorId: string; changed: boolean }>;
   taskExecutor: (botId: string, taskId: string) => Promise<TaskResult>;
   healthReader: () => Promise<AppHealthSnapshot>;
+  versionReader?: () => Promise<string>;
   updateInspector?: () => Promise<import('./update.ts').UpdateInspection>;
   updatePerformer?: (
     inspection: Extract<import('./update.ts').UpdateInspection, { status: 'update_available' }>,
@@ -513,6 +515,12 @@ export async function runKfcCli(argv: string[], deps: KfcCliDeps = createDefault
       return 0;
     }
 
+    if (command === 'version') {
+      const version = await (deps.versionReader ?? readCurrentVersionLabel)();
+      deps.stdout.write(`${version}\n`);
+      return 0;
+    }
+
     if (command === 'update') {
       const flags = parseFlags(rest);
       if (!deps.updateInspector || !deps.updatePerformer || !deps.confirmUpdate) {
@@ -640,7 +648,7 @@ export async function runKfcCli(argv: string[], deps: KfcCliDeps = createDefault
       return 0;
     }
 
-    throw new Error('Usage: kfc <service|health|update|rollback|pair|exec|uninstall> ...');
+    throw new Error('Usage: kfc <service|health|version|update|rollback|pair|exec|uninstall> ...');
   } catch (error) {
     deps.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     return 1;

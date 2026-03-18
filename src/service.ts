@@ -26,6 +26,7 @@ import {
   buildHelpCard,
   buildRunStatusCard,
   buildTaskListCard,
+  buildVersionCard,
 } from './feishu/cards.ts';
 import { isIngressObservationStale } from './health.ts';
 import { summarizeParameters, validateParameters } from './config/schema.ts';
@@ -34,6 +35,7 @@ import { RunRepository } from './persistence/run-repository.ts';
 import { TaskRuntime } from './execution/runtime.ts';
 import { createBuiltinToolRegistry } from './tools/index.ts';
 import { type CronController, MemoryCronController } from './cron.ts';
+import { readCurrentVersionLabel } from './version.ts';
 
 export class MemoryRunUpdateSink implements RunUpdateSink {
   readonly updates: RunRecord[] = [];
@@ -200,6 +202,7 @@ export class KidsAlfredService {
   private runtime: TaskRuntime;
   private readonly cronController: CronController;
   private healthSnapshotProvider?: () => AppHealthSnapshot;
+  private versionProvider?: () => Promise<string>;
   private readonly serviceReconnectNotificationThresholdMs: number;
   private websocketObservation?: { lastEventReceivedAt: string; lastEventType: string };
 
@@ -247,6 +250,10 @@ export class KidsAlfredService {
 
   setHealthSnapshotProvider(provider: () => AppHealthSnapshot): void {
     this.healthSnapshotProvider = provider;
+  }
+
+  setVersionProvider(provider: () => Promise<string>): void {
+    this.versionProvider = provider;
   }
 
   getWebSocketObservationHealth(now: string = new Date().toISOString()): Pick<
@@ -347,7 +354,7 @@ export class KidsAlfredService {
 
   private buildUnsupportedCommandMessage(): string {
     const runExample = this.hasScreencaptureTask() ? ' (for example `/run sc`)' : '';
-    return `Unsupported command. Use /help, /server health, /tasks, /run TASK_ID key=value ...${runExample}, /server update, /server rollback, /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.`;
+    return `Unsupported command. Use /help, /server health, /server version, /tasks, /run TASK_ID key=value ...${runExample}, /server update, /server rollback, /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.`;
   }
 
   async listCronTasks(
@@ -536,6 +543,17 @@ export class KidsAlfredService {
           chatId: context.chatId,
           eventType: 'im.message.receive_v1',
           commandType: 'health',
+          decision: 'status_returned',
+        });
+        return response;
+      }
+      if (trimmed === '/server version') {
+        const response = await this.getVersion(actorId);
+        await this.logEvent({
+          actorId,
+          chatId: context.chatId,
+          eventType: 'im.message.receive_v1',
+          commandType: 'version',
           decision: 'status_returned',
         });
         return response;
@@ -870,6 +888,12 @@ export class KidsAlfredService {
     return buildHealthCard(this.healthSnapshotProvider());
   }
 
+  private async getVersion(actorId: string): Promise<CardResponse> {
+    this.ensureAuthorized(actorId);
+    const version = await (this.versionProvider?.() ?? readCurrentVersionLabel());
+    return buildVersionCard(version);
+  }
+
   private getTask(taskId: string) {
     const task = this.config.tasks[taskId];
     if (!task) {
@@ -917,6 +941,9 @@ export class KidsAlfredService {
     }
     if (text === '/server health') {
       return 'health';
+    }
+    if (text === '/server version') {
+      return 'version';
     }
     if (text === '/server update') {
       return 'server_update';
