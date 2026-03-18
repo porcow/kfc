@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { resolveAppEntrypoint, resolveBunExecutablePath } from '../config/paths.ts';
+import { currentAppPath, resolveBunExecutablePath } from '../config/paths.ts';
+import { resolve } from 'node:path';
 
 import type {
   RunRecord,
@@ -98,13 +99,14 @@ async function runBuiltinToolViaKfc(
   run: RunRecord,
   signal: AbortSignal,
   botId?: string,
+  workingDirectory?: string,
 ): Promise<TaskResult> {
   const runnerPath = resolveBunExecutablePath();
   return await new Promise<TaskResult>((resolvePromise, rejectPromise) => {
     const child = spawn(
-      runnerPath,
+        runnerPath,
       [
-        resolveAppEntrypoint('src/kfc.ts'),
+        resolve(currentAppPath(), 'src/kfc.ts'),
         'exec',
         '--task-json',
         Buffer.from(JSON.stringify(task), 'utf8').toString('base64'),
@@ -115,6 +117,7 @@ async function runBuiltinToolViaKfc(
         '--run-id',
         run.runId,
         ...(botId ? ['--bot-id', botId] : []),
+        ...(workingDirectory ? ['--working-directory', workingDirectory] : []),
       ],
       {
         shell: false,
@@ -188,6 +191,7 @@ export class TaskRuntime {
   private readonly updates: RunUpdateSink;
   private readonly resultDeliveries: TaskResultDeliverySink;
   private readonly botId?: string;
+  private readonly workingDirectory?: string;
 
   constructor(
     repository: RunRepository,
@@ -195,12 +199,14 @@ export class TaskRuntime {
     updates: RunUpdateSink,
     resultDeliveries: TaskResultDeliverySink,
     botId?: string,
+    workingDirectory?: string,
   ) {
     this.repository = repository;
     this.tools = tools;
     this.updates = updates;
     this.resultDeliveries = resultDeliveries;
     this.botId = botId;
+    this.workingDirectory = workingDirectory;
   }
 
   async start(run: RunRecord, task: TaskDefinition): Promise<void> {
@@ -237,7 +243,7 @@ export class TaskRuntime {
     try {
       const result =
         task.runnerKind === 'builtin-tool'
-          ? await runBuiltinToolViaKfc(task, run, abortController.signal, this.botId)
+          ? await runBuiltinToolViaKfc(task, run, abortController.signal, this.botId, this.workingDirectory)
           : await runExternalCommand(task, run.parameters, abortController.signal);
 
       if (result.data?.serviceRefreshHandoff === true) {

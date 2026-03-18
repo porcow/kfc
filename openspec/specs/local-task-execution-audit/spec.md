@@ -92,6 +92,29 @@ The system SHALL execute only tasks declared in local configuration and SHALL st
 - **WHEN** a bot declares task `update`
 - **THEN** the system accepts it only if it remains bound to `runner_kind = "builtin-tool"`, `execution_mode = "oneshot"`, and `tool = "self-update"`
 
+#### Scenario: Bot explicitly configures `shell`
+- **WHEN** a bot declares task `shell`
+- **THEN** the system accepts it only if it remains bound to `runner_kind = "builtin-tool"`, `execution_mode = "oneshot"`, and `tool = "shell-script"`
+
+#### Scenario: Bot explicitly configures `osascript`
+- **WHEN** a bot declares task `osascript`
+- **THEN** the system accepts it only if it remains bound to `runner_kind = "builtin-tool"`, `execution_mode = "oneshot"`, and `tool = "osascript-script"`
+
+#### Scenario: Confirmed shell execution runs the submitted script body
+- **WHEN** an authorized Feishu `/shell` request is confirmed for a bot that exposes task `shell`
+- **THEN** the system materializes the submitted shell script body to a temporary file under the bot working directory
+- **AND** it executes that file locally through the controlled built-in tool boundary
+
+#### Scenario: Confirmed osascript execution runs the submitted script body
+- **WHEN** an authorized Feishu `/osascript` request is confirmed for a bot that exposes task `osascript`
+- **THEN** the system materializes the submitted AppleScript body to a temporary file under the bot working directory
+- **AND** it executes that file locally through the controlled built-in tool boundary
+
+#### Scenario: Ad hoc script runs remain auditable like other one-shot tasks
+- **WHEN** a confirmed `/shell` or `/osascript` request creates a run
+- **THEN** the run is persisted through the same one-shot audit path used by other built-in tasks
+- **AND** `/run-status <run_id>` returns the canonical persisted state and summary for that execution
+
 ### Requirement: Each bot has an isolated task registry and run store
 The system SHALL keep each bot's allowed users, task definitions, pending confirmations, and run history isolated from every other bot loaded in the same process.
 

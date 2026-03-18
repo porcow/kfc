@@ -587,6 +587,12 @@ function detectMessageCommandType(text: string): string {
   if (trimmed === '/server rollback') {
     return 'server_rollback';
   }
+  if (trimmed.startsWith('/shell')) {
+    return 'shell';
+  }
+  if (trimmed.startsWith('/osascript')) {
+    return 'osascript';
+  }
   if (trimmed === '/tasks') {
     return 'tasks';
   }

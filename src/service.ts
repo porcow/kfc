@@ -190,6 +190,14 @@ function parseRunCommand(command: string): { taskId: string; parameters: Record<
   };
 }
 
+function parseInlineScriptCommand(command: string, prefix: '/shell' | '/osascript'): string {
+  const script = command.slice(prefix.length).trim();
+  if (!script) {
+    throw new Error('script content is required');
+  }
+  return script;
+}
+
 export class KidsAlfredService {
   private readonly botId: string;
   private readonly updates: MultiRunUpdateSink;
@@ -229,6 +237,7 @@ export class KidsAlfredService {
       this.updates,
       this.resultDeliveries,
       this.botId,
+      this.config.workingDirectory,
     );
     this.cronController =
       cronController ?? new MemoryCronController(config.botId, config.tasks, this.repository);
@@ -354,7 +363,7 @@ export class KidsAlfredService {
 
   private buildUnsupportedCommandMessage(): string {
     const runExample = this.hasScreencaptureTask() ? ' (for example `/run sc`)' : '';
-    return `Unsupported command. Use /help, /server health, /server version, /tasks, /run TASK_ID key=value ...${runExample}, /server update, /server rollback, /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.`;
+    return `Unsupported command. Use /help, /server health, /server version, /tasks, /run TASK_ID key=value ...${runExample}, /server update, /server rollback, /shell {script}, /osascript {script}, /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.`;
   }
 
   async listCronTasks(
@@ -586,6 +595,46 @@ export class KidsAlfredService {
         });
         return response;
       }
+      if (trimmed.startsWith('/shell')) {
+        const response = this.submitInlineScriptTaskRequest(
+          actorId,
+          'shell',
+          'shell-script',
+          parseInlineScriptCommand(trimmed, '/shell'),
+          context,
+        );
+        const confirmationId = this.findPendingConfirmationId(actorId, 'shell', context.chatId);
+        await this.logEvent({
+          actorId,
+          chatId: context.chatId,
+          eventType: 'im.message.receive_v1',
+          commandType: 'shell',
+          decision: 'confirmation_created',
+          taskId: 'shell',
+          confirmationId,
+        });
+        return response;
+      }
+      if (trimmed.startsWith('/osascript')) {
+        const response = this.submitInlineScriptTaskRequest(
+          actorId,
+          'osascript',
+          'osascript-script',
+          parseInlineScriptCommand(trimmed, '/osascript'),
+          context,
+        );
+        const confirmationId = this.findPendingConfirmationId(actorId, 'osascript', context.chatId);
+        await this.logEvent({
+          actorId,
+          chatId: context.chatId,
+          eventType: 'im.message.receive_v1',
+          commandType: 'osascript',
+          decision: 'confirmation_created',
+          taskId: 'osascript',
+          confirmationId,
+        });
+        return response;
+      }
       if (trimmed === '/cron list' || trimmed === '/cron status') {
         const response =
           trimmed === '/cron list'
@@ -605,6 +654,8 @@ export class KidsAlfredService {
           hasScreencaptureTask: this.hasScreencaptureTask(),
           hasUpdateTask: this.hasProtectedBuiltinTask('update', 'self-update'),
           hasRollbackTask: this.hasProtectedBuiltinTask('rollback', 'self-rollback'),
+          hasShellTask: this.hasProtectedBuiltinTask('shell', 'shell-script'),
+          hasOsascriptTask: this.hasProtectedBuiltinTask('osascript', 'osascript-script'),
         });
         await this.logEvent({
           actorId,
@@ -951,6 +1002,12 @@ export class KidsAlfredService {
     if (text === '/server rollback') {
       return 'server_rollback';
     }
+    if (text.startsWith('/shell')) {
+      return 'shell';
+    }
+    if (text.startsWith('/osascript')) {
+      return 'osascript';
+    }
     if (text === '/tasks') {
       return 'tasks';
     }
@@ -1004,6 +1061,34 @@ export class KidsAlfredService {
       throw new Error(`Task mode mismatch: ${taskId} must be managed through /run`);
     }
     return this.submitTaskRequest(actorId, taskId, {}, context);
+  }
+
+  private submitInlineScriptTaskRequest(
+    actorId: string,
+    taskId: 'shell' | 'osascript',
+    tool: 'shell-script' | 'osascript-script',
+    script: string,
+    context: { chatId?: string } = {},
+  ): CardResponse {
+    this.ensureAuthorized(actorId);
+    const task = this.config.tasks[taskId];
+    if (!this.hasProtectedBuiltinTask(taskId, tool) || !task) {
+      throw new Error(this.buildUnsupportedCommandMessage());
+    }
+    if (task.executionMode !== 'oneshot') {
+      throw new Error(`Task mode mismatch: ${taskId} must be managed through /run`);
+    }
+    const confirmationId = createConfirmationId();
+    const parameters = { script };
+    this.pendingConfirmations.set(confirmationId, {
+      id: confirmationId,
+      actorId,
+      taskId,
+      parameters,
+      createdAt: new Date().toISOString(),
+      originChatId: context.chatId,
+    });
+    return buildConfirmationCard(task, parameters, confirmationId);
   }
 
   private resolveCardActionActorId(

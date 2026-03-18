@@ -54,6 +54,32 @@ function validatePredefinedTask(task: TaskDefinition, path: string): void {
         `Predefined task rollback must remain a builtin-tool oneshot bound to self-rollback at ${path}`,
       );
     }
+    return;
+  }
+
+  if (task.id === 'shell') {
+    if (
+      task.runnerKind !== 'builtin-tool' ||
+      task.executionMode !== 'oneshot' ||
+      task.tool !== 'shell-script'
+    ) {
+      throw new Error(
+        `Predefined task shell must remain a builtin-tool oneshot bound to shell-script at ${path}`,
+      );
+    }
+    return;
+  }
+
+  if (task.id === 'osascript') {
+    if (
+      task.runnerKind !== 'builtin-tool' ||
+      task.executionMode !== 'oneshot' ||
+      task.tool !== 'osascript-script'
+    ) {
+      throw new Error(
+        `Predefined task osascript must remain a builtin-tool oneshot bound to osascript-script at ${path}`,
+      );
+    }
   }
 }
 

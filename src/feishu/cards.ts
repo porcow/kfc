@@ -117,6 +117,12 @@ function buildExampleCommand(task: TaskDefinition): string {
   if (task.id === 'rollback') {
     return '/server rollback';
   }
+  if (task.id === 'shell') {
+    return '/shell echo "hello world"';
+  }
+  if (task.id === 'osascript') {
+    return '/osascript display notification "Hello World" with title "Test"';
+  }
   const parameters = Object.entries(task.parameters).map(([name, definition]) =>
     buildExampleValue(name, definition),
   );
@@ -124,6 +130,20 @@ function buildExampleCommand(task: TaskDefinition): string {
 }
 
 function formatTaskDetails(task: TaskDefinition): string {
+  if (task.id === 'shell') {
+    return (
+      `**${task.id}**\n${task.description}\nRunner: ${task.runnerKind}\nMode: ${task.executionMode}\n` +
+      'Submit the shell script body directly after `/shell `.\n' +
+      `Example:\n\`${buildExampleCommand(task)}\``
+    );
+  }
+  if (task.id === 'osascript') {
+    return (
+      `**${task.id}**\n${task.description}\nRunner: ${task.runnerKind}\nMode: ${task.executionMode}\n` +
+      'Submit the AppleScript body directly after `/osascript `.\n' +
+      `Example:\n\`${buildExampleCommand(task)}\``
+    );
+  }
   const parameterLines = Object.entries(task.parameters).map(([name, definition]) =>
     formatParameterDefinition(name, definition),
   );
@@ -238,7 +258,13 @@ export function buildCronStatusCard(
 }
 
 export function buildHelpCard(
-  options: { hasScreencaptureTask?: boolean; hasUpdateTask?: boolean; hasRollbackTask?: boolean } = {},
+  options: {
+    hasScreencaptureTask?: boolean;
+    hasUpdateTask?: boolean;
+    hasRollbackTask?: boolean;
+    hasShellTask?: boolean;
+    hasOsascriptTask?: boolean;
+  } = {},
 ): CardResponse {
   const lines = [
     '`/server health`',
@@ -261,6 +287,12 @@ export function buildHelpCard(
   }
   if (options.hasRollbackTask) {
     lines.push('Use `/server rollback` to restore the previous locally installed version after confirmation.');
+  }
+  if (options.hasShellTask) {
+    lines.push('Use `/shell {script}` to submit an ad hoc shell script for confirmation and one-shot execution.');
+  }
+  if (options.hasOsascriptTask) {
+    lines.push('Use `/osascript {script}` to submit an ad hoc AppleScript for confirmation and one-shot execution.');
   }
   lines.push(
     '',

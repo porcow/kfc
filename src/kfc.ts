@@ -241,6 +241,7 @@ export async function executeTaskDefinition(
   runId = `kfc_${task.id}`,
   options: {
     botId?: string;
+    workingDirectory?: string;
     pdWin11StateStore?: {
       getPDWin11State(taskId: string): unknown;
       savePDWin11State(taskId: string, state: unknown): unknown;
@@ -259,6 +260,7 @@ export async function executeTaskDefinition(
       task,
       actorId,
       botId: options.botId,
+      workingDirectory: options.workingDirectory,
       parameters,
       pdWin11StateStore: options.pdWin11StateStore,
     });
@@ -621,6 +623,7 @@ export async function runKfcCli(argv: string[], deps: KfcCliDeps = createDefault
           flags['--run-id'] ?? `kfc_${task.id}`,
           {
             botId: flags['--bot-id'],
+            workingDirectory: flags['--working-directory'],
           },
         );
         deps.stdout.write(`${JSON.stringify(result)}\n`);

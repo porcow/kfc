@@ -362,6 +362,138 @@ cancellable = false
   );
 });
 
+test('loadConfig accepts explicit shell configuration and keeps its protected binding', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-shell-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.shell]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Execute an ad hoc shell script"
+tool = "shell-script"
+timeout_ms = 30000
+cancellable = false
+`,
+  );
+
+  const config = await loadConfig(configPath);
+
+  assert.equal(config.bots.alpha.tasks.shell.runnerKind, 'builtin-tool');
+  assert.equal(config.bots.alpha.tasks.shell.executionMode, 'oneshot');
+  assert.equal(config.bots.alpha.tasks.shell.tool, 'shell-script');
+});
+
+test('loadConfig rejects explicit shell configuration that changes its protected binding', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-shell-invalid-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.shell]
+runner_kind = "external-command"
+execution_mode = "oneshot"
+description = "Bad shell binding"
+command = "/bin/echo"
+args = ["oops"]
+timeout_ms = 1000
+cancellable = false
+`,
+  );
+
+  await assert.rejects(
+    () => loadConfig(configPath),
+    /Predefined task shell must remain a builtin-tool oneshot bound to shell-script/,
+  );
+});
+
+test('loadConfig accepts explicit osascript configuration and keeps its protected binding', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-osascript-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.osascript]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Execute an ad hoc AppleScript"
+tool = "osascript-script"
+timeout_ms = 30000
+cancellable = false
+`,
+  );
+
+  const config = await loadConfig(configPath);
+
+  assert.equal(config.bots.alpha.tasks.osascript.runnerKind, 'builtin-tool');
+  assert.equal(config.bots.alpha.tasks.osascript.executionMode, 'oneshot');
+  assert.equal(config.bots.alpha.tasks.osascript.tool, 'osascript-script');
+});
+
+test('loadConfig rejects explicit osascript configuration that changes its protected binding', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-osascript-invalid-'));
+  const configPath = join(directory, 'bot.toml');
+  await writeFile(
+    configPath,
+    `
+[server]
+port = 3100
+
+[bots.alpha]
+allowed_users = ["user-1"]
+
+[bots.alpha.feishu]
+app_id = "alpha-app"
+app_secret = "alpha-secret"
+
+[bots.alpha.tasks.osascript]
+runner_kind = "external-command"
+execution_mode = "oneshot"
+description = "Bad osascript binding"
+command = "/usr/bin/osascript"
+args = ["-e", "beep"]
+timeout_ms = 1000
+cancellable = false
+`,
+  );
+
+  await assert.rejects(
+    () => loadConfig(configPath),
+    /Predefined task osascript must remain a builtin-tool oneshot bound to osascript-script/,
+  );
+});
+
 test('loadConfig rejects duplicate bot sqlite storage paths', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-config-dup-'));
   const configPath = join(directory, 'bot.toml');

@@ -2,13 +2,40 @@
 Define the Feishu-facing command, card, and reply behavior for task discovery, execution, run tracking, and authorization flows.
 ## Requirements
 ### Requirement: Authorized users can discover tasks and start runs from Feishu text commands
-The system SHALL allow an authorized Feishu user to request the list of available tasks from Feishu, inspect service health, and start task execution flows by sending structured text commands over the supported long-connection integration.
+The system SHALL allow an authorized Feishu user to request the list of available tasks from Feishu, inspect service health, inspect service version, submit protected host-execution scripts, and start task execution flows by sending structured text commands over the supported long-connection integration.
 
 #### Scenario: Authorized user requests bot health
 - **WHEN** a Feishu user in the allowed user list sends `/server health`
 - **THEN** the system returns an informational response that summarizes readiness, each bot's effective availability, and WebSocket transport diagnostics
 - **AND** it does not render a separate `Degraded` field
 - **AND** it treats `websocket.state` as transport detail rather than the final availability verdict
+
+#### Scenario: Authorized user submits a shell script
+- **WHEN** a Feishu user in the allowed user list sends `/shell {script}`
+- **AND** the current bot has explicitly configured task `shell`
+- **THEN** the system validates that a non-empty shell script body was provided
+- **AND** it returns a confirmation card that identifies the request as a shell execution with a bounded preview of the submitted script
+
+#### Scenario: Authorized user submits an osascript
+- **WHEN** a Feishu user in the allowed user list sends `/osascript {script}`
+- **AND** the current bot has explicitly configured task `osascript`
+- **THEN** the system validates that a non-empty AppleScript body was provided
+- **AND** it returns a confirmation card that identifies the request as an osascript execution with a bounded preview of the submitted script
+
+#### Scenario: Bot omits explicit `shell` task configuration
+- **WHEN** a bot does not declare task `shell`
+- **THEN** `/shell` is rejected as unavailable for that bot
+- **AND** `/help` and `/tasks` do not advertise shell execution as an available action
+
+#### Scenario: Bot omits explicit `osascript` task configuration
+- **WHEN** a bot does not declare task `osascript`
+- **THEN** `/osascript` is rejected as unavailable for that bot
+- **AND** `/help` and `/tasks` do not advertise osascript execution as an available action
+
+#### Scenario: Script commands require a non-empty body
+- **WHEN** an authorized user sends `/shell` or `/osascript` without any script content
+- **THEN** the system rejects the request without creating a confirmation
+- **AND** it returns clear validation feedback indicating that script content is required
 
 ### Requirement: Requests are routed to the correct bot instance
 The system SHALL route each inbound Feishu event or callback to the bot instance identified by the bot-scoped WebSocket session and SHALL keep bot credentials and task catalogs isolated from each other.

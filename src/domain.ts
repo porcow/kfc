@@ -190,6 +190,7 @@ export interface TaskRunContext {
   task: TaskDefinition;
   actorId: string;
   botId?: string;
+  workingDirectory?: string;
   parameters: Record<string, string | number | boolean>;
   pdWin11StateStore?: PDWin11MonitorStateStore;
 }

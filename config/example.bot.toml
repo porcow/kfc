@@ -23,7 +23,7 @@ tool = "screencapture"
 timeout_ms = 30000
 cancellable = false
 
-# Self-update is also opt-in. Declare tasks.update explicitly if this bot should allow /run update.
+# Self-update is also opt-in. Declare tasks.update explicitly if this bot should allow /server update.
 [bots.ops.tasks.update]
 runner_kind = "builtin-tool"
 execution_mode = "oneshot"
@@ -32,13 +32,31 @@ tool = "self-update"
 timeout_ms = 300000
 cancellable = false
 
-# Rollback is also opt-in. Declare tasks.rollback explicitly if this bot should allow /run rollback.
+# Rollback is also opt-in. Declare tasks.rollback explicitly if this bot should allow /server rollback.
 [bots.ops.tasks.rollback]
 runner_kind = "builtin-tool"
 execution_mode = "oneshot"
 description = "Rollback this deployment to the previous locally installed version"
 tool = "self-rollback"
 timeout_ms = 300000
+cancellable = false
+
+# Inline script execution is also opt-in. Declare tasks.shell explicitly if this bot should allow /shell {script}.
+[bots.ops.tasks.shell]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Execute an inline shell script on this host after confirmation"
+tool = "shell-script"
+timeout_ms = 30000
+cancellable = false
+
+# Inline AppleScript execution is also opt-in. Declare tasks.osascript explicitly if this bot should allow /osascript {script}.
+[bots.ops.tasks.osascript]
+runner_kind = "builtin-tool"
+execution_mode = "oneshot"
+description = "Execute an inline AppleScript on this host after confirmation"
+tool = "osascript-script"
+timeout_ms = 30000
 cancellable = false
 
 [bots.ops.tasks.say-hello]

@@ -110,7 +110,7 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 - Task definitions are loaded from TOML under `[bots.<id>]` using `runner_kind = "builtin-tool" | "external-command"` plus `execution_mode = "oneshot" | "cronjob"`, and only activate after startup or explicit reload.
 - Run history is stored in a separate SQLite file per bot via Bun's built-in sqlite support.
 - Cronjob desired and observed state is stored separately from one-shot run history and reconciled against `launchd` on startup and reload.
-- `/health` now reports process liveness, ingress mode, per-bot transport health, and effective bot availability. Use it to distinguish “process is up”, “WebSocket is healthy”, and “the bot is still serviceable through fallback ingress”.
+- `/health` now reports process liveness, per-bot WebSocket transport health, recent WebSocket ingress observations, and effective bot availability.
 
 
 ## Feishu Interaction Flow
@@ -120,6 +120,8 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 - Send `/server version` to get the current running or installed version.
 - Send `/tasks` to get an informational catalog of one-shot tasks for the current bot.
 - Bots only expose `/run sc` when they explicitly configure task `sc`; when enabled, it captures the current screen and returns the image to the same chat after confirmation.
+- Bots only expose `/shell {script}` when they explicitly configure task `shell`; when enabled, it submits the inline shell body as a high-privilege one-shot run after confirmation.
+- Bots only expose `/osascript {script}` when they explicitly configure task `osascript`; when enabled, it submits the inline AppleScript body as a high-privilege one-shot run after confirmation.
 - Bots only expose `/server update` when they explicitly configure task `update`; when enabled, it checks the latest stable GitHub Release and hands the refresh phase off to a detached one-shot helper so the running service can be safely replaced without killing the update executor.
 - Bots only expose `/server rollback` when they explicitly configure task `rollback`; when enabled, it hands the rollback refresh phase off to the same detached helper model instead of letting the active service process replace itself in-place.
 - If your Feishu user is not yet authorized, the bot returns a one-time pairing card with a local admin command in the form `kfc pair BOT_ID-RAND6`.
@@ -185,6 +187,7 @@ KFC_DELETE_CONFIG=true curl -fsSL https://raw.githubusercontent.com/porcow/kfc/m
 - All displayed time fields in Feishu cards use `YYYY/MM/DD HH:mm:ss`.
 - `Summary` is a concise operator-facing excerpt derived from the persisted run record, not a raw stdout or stderr dump.
 - Feishu summaries are truncated to 300 characters with an ellipsis when necessary.
+- `/shell` and `/osascript` materialize the submitted script body into a temporary local file before execution, and still use the same run persistence and `/run-status` lookup contract as other one-shot tasks.
 - `/run sc` writes a temporary screenshot file under `~/.kfc/data/screenshot-YYYYMMDD-HHmmss.png`, uploads it back to the originating chat, and removes the file only after successful delivery.
 - `/server update` reuses the same release-based inspect/prepare/handoff workflow as `kfc update`; the final run summary is recovered after restart from the detached helper operation state and reports `already latest`, `update completed`, `update failed and rolled back`, or explicit blocking/recovery errors.
 - `/server rollback` reuses the same rollback inspect/prepare/handoff workflow as `kfc rollback`; the final run summary is likewise recovered from durable helper state after service replacement.

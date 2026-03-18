@@ -438,6 +438,108 @@ test('service help advertises update and rollback only when explicitly configure
   await service.close();
 });
 
+test('service supports /shell and /osascript only when explicitly configured', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-script-commands-'));
+  const databasePath = join(directory, 'runs.sqlite');
+  const botConfig = createBotConfig('alpha', databasePath);
+  botConfig.workingDirectory = directory;
+  botConfig.tasks.shell = {
+    id: 'shell',
+    runnerKind: 'builtin-tool',
+    executionMode: 'oneshot',
+    description: 'Execute an ad hoc shell script',
+    tool: 'shell-script',
+    timeoutMs: 30000,
+    cancellable: false,
+    parameters: {},
+  };
+  botConfig.tasks.osascript = {
+    id: 'osascript',
+    runnerKind: 'builtin-tool',
+    executionMode: 'oneshot',
+    description: 'Execute an ad hoc AppleScript',
+    tool: 'osascript-script',
+    timeoutMs: 30000,
+    cancellable: false,
+    parameters: {},
+  };
+
+  const service = new KidsAlfredService(botConfig, new MemoryRunUpdateSink());
+
+  const help = await service.handleMessage('operator-1', '/help');
+  const helpJson = JSON.stringify(help.card);
+  assert.ok(helpJson.includes('/shell'));
+  assert.ok(helpJson.includes('/osascript'));
+
+  const shellConfirmation = await service.handleMessage(
+    'operator-1',
+    '/shell echo "hello"',
+    { chatId: 'chat-shell-1' },
+  );
+  const shellConfirmationJson = JSON.stringify(shellConfirmation.card);
+  const shellConfirmationId = shellConfirmationJson.match(/confirm_[\w-]+/u)?.[0];
+  assert.ok(shellConfirmationId);
+  assert.ok(shellConfirmationJson.includes('shell'));
+  assert.ok(shellConfirmationJson.includes('echo'));
+  assert.ok(shellConfirmationJson.includes('hello'));
+
+  const shellRun = await service.handleCardAction('operator-1', {
+    type: 'confirm_task',
+    confirmationId: shellConfirmationId,
+  });
+  const shellRunId = JSON.stringify(shellRun.card).match(/run_[\w-]+/u)?.[0];
+  assert.ok(shellRunId);
+  await waitForState(service, 'operator-1', shellRunId!, 'succeeded');
+
+  const osascriptConfirmation = await service.handleMessage(
+    'operator-1',
+    '/osascript return "Hello World"',
+    { chatId: 'chat-osascript-1' },
+  );
+  const osascriptConfirmationJson = JSON.stringify(osascriptConfirmation.card);
+  const osascriptConfirmationId = osascriptConfirmationJson.match(/confirm_[\w-]+/u)?.[0];
+  assert.ok(osascriptConfirmationId);
+  assert.ok(osascriptConfirmationJson.includes('osascript'));
+  assert.ok(osascriptConfirmationJson.includes('return'));
+
+  const osascriptRun = await service.handleCardAction('operator-1', {
+    type: 'confirm_task',
+    confirmationId: osascriptConfirmationId,
+  });
+  const osascriptRunId = JSON.stringify(osascriptRun.card).match(/run_[\w-]+/u)?.[0];
+  assert.ok(osascriptRunId);
+  await waitForState(service, 'operator-1', osascriptRunId!, 'succeeded');
+
+  assert.deepEqual(
+    service
+      .listRecentRuns('operator-1')
+      .filter((run) => run.taskId === 'shell' || run.taskId === 'osascript')
+      .sort((left, right) => left.taskId.localeCompare(right.taskId))
+      .map((run) => run.parameters),
+    [
+      { script: 'return "Hello World"' },
+      { script: 'echo "hello"' },
+    ],
+  );
+
+  const missingShell = await service.handleMessage('operator-1', '/shell');
+  assert.ok(JSON.stringify(missingShell.card).includes('script content is required'));
+
+  const missingOsascript = await service.handleMessage('operator-1', '/osascript');
+  assert.ok(JSON.stringify(missingOsascript.card).includes('script content is required'));
+
+  delete botConfig.tasks.shell;
+  delete botConfig.tasks.osascript;
+  const withoutProtectedTasks = new KidsAlfredService(botConfig, new MemoryRunUpdateSink());
+  const unsupportedShell = await withoutProtectedTasks.handleMessage('operator-1', '/shell echo hi');
+  assert.ok(JSON.stringify(unsupportedShell.card).includes('Unsupported command'));
+  const unsupportedOsascript = await withoutProtectedTasks.handleMessage('operator-1', '/osascript beep');
+  assert.ok(JSON.stringify(unsupportedOsascript.card).includes('Unsupported command'));
+
+  await withoutProtectedTasks.close();
+  await service.close();
+});
+
 test('service routes /run sc through the standard confirmation flow', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-sc-run-'));
   const databasePath = join(directory, 'runs.sqlite');
