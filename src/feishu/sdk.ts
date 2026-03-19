@@ -4,6 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 
 import type {
+  BotAvailabilityHealth,
   BotWebSocketHealth,
   RunRecord,
   RunUpdateSink,
@@ -110,6 +111,8 @@ export function extractCardActionPayload(event: any): {
 export interface BotBridge {
   botId: string;
   startWebSocketClient(): Promise<void>;
+  handleSystemSleep(observedAt?: string): Promise<void>;
+  handleSystemWake(observedAt?: string): Promise<void>;
   close(): Promise<void>;
   getWebSocketHealth(): BotWebSocketHealth;
 }
@@ -189,6 +192,12 @@ export interface AvailabilityEvaluationDecision {
   shouldEvaluate: boolean;
   nextLastEvaluatedAvailability: boolean;
   nextStartupBaselineEvaluated: boolean;
+}
+
+export interface PowerNotificationState {
+  lastSleepAt?: string;
+  lastWakeAt?: string;
+  pendingWakeNotificationAt?: string;
 }
 
 function stringifyLogMessage(message: unknown): string {
@@ -429,22 +438,33 @@ async function sendServiceEventNotification(
   client: ReplyClient,
   service: ServiceEventAwareService,
   eventType: ServiceEventType,
-  connectedAt: string,
-  options: { heartbeatGapMs?: number; activeIngress?: BotAvailabilityHealth['activeIngress'] } = {},
-): Promise<void> {
+  eventAt: string,
+  options: {
+    heartbeatGapMs?: number;
+    activeIngress?: BotAvailabilityHealth['activeIngress'];
+    lastSleepAt?: string;
+    lastWakeAt?: string;
+  } = {},
+): Promise<{ actorCount: number; deliveredCount: number }> {
   const actorIds = service.listServiceEventSubscriberActorIds(eventType);
   if (actorIds.length === 0) {
-    return;
+    return {
+      actorCount: 0,
+      deliveredCount: 0,
+    };
   }
   const card = buildServiceEventNotificationCard({
     eventType,
     botId: service.getBotId(),
-    connectedAt,
+    eventAt,
     host: hostname(),
     loadedAt: service.getConfig().loadedAt,
     heartbeatGapMs: options.heartbeatGapMs,
     activeIngress: options.activeIngress,
+    lastSleepAt: options.lastSleepAt,
+    lastWakeAt: options.lastWakeAt,
   });
+  let deliveredCount = 0;
   for (const actorId of actorIds) {
     await sendInteractiveCard(
       client,
@@ -453,18 +473,26 @@ async function sendServiceEventNotification(
         receiveId: actorId,
       },
       card,
-    ).catch((error) => {
-      console.error(
-        JSON.stringify({
-          logType: 'service_event_notification_delivery_failed',
-          botId: service.getBotId(),
-          actorId,
-          eventType,
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
-    });
+    )
+      .then(() => {
+        deliveredCount += 1;
+      })
+      .catch((error) => {
+        console.error(
+          JSON.stringify({
+            logType: 'service_event_notification_delivery_failed',
+            botId: service.getBotId(),
+            actorId,
+            eventType,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      });
   }
+  return {
+    actorCount: actorIds.length,
+    deliveredCount,
+  };
 }
 
 function isConnectedState(state: BotWebSocketHealth['state']): boolean {
@@ -489,6 +517,59 @@ function getWebSocketHealthForService(
         now,
       ),
   };
+}
+
+export function recordPowerEvent(
+  state: PowerNotificationState,
+  eventType: 'sleep' | 'wake',
+  observedAt: string,
+): PowerNotificationState {
+  if (eventType === 'sleep') {
+    return {
+      ...state,
+      lastSleepAt: observedAt,
+    };
+  }
+  return {
+    ...state,
+    lastWakeAt: observedAt,
+    pendingWakeNotificationAt: observedAt,
+  };
+}
+
+export async function processPendingWakeNotification(
+  service: ServiceEventAwareService,
+  client: ReplyClient,
+  now: string,
+  currentHealth: BotWebSocketHealth,
+  powerState: PowerNotificationState,
+): Promise<PowerNotificationState> {
+  if (!powerState.pendingWakeNotificationAt) {
+    return powerState;
+  }
+  const websocketHealth = getWebSocketHealthForService(service, currentHealth, now);
+  const availability = buildAvailability(websocketHealth);
+  if (!availability.ingressAvailable) {
+    return powerState;
+  }
+  const delivery = await sendServiceEventNotification(
+    client,
+    service,
+    'system_woke',
+    powerState.pendingWakeNotificationAt,
+    {
+      activeIngress: availability.activeIngress,
+      lastSleepAt: powerState.lastSleepAt,
+      lastWakeAt: powerState.lastWakeAt,
+    },
+  );
+  if (delivery.actorCount === 0 || delivery.deliveredCount > 0) {
+    return {
+      ...powerState,
+      pendingWakeNotificationAt: undefined,
+    };
+  }
+  return powerState;
 }
 
 export async function processServiceConnectionTransition(
@@ -791,6 +872,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
   let onlineNotificationSent = false;
   let lastEvaluatedAvailability = false;
   let startupBaselineEvaluated = false;
+  let powerState: PowerNotificationState = {};
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   let connectionEventQueue = Promise.resolve();
   const enqueueConnectionEvent = (operation: () => Promise<void>) => {
@@ -825,6 +907,9 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       );
     });
   };
+  const tryDeliverPendingWakeNotification = async (now: string): Promise<void> => {
+    powerState = await processPendingWakeNotification(service, client, now, { ...webSocketHealth }, powerState);
+  };
   const enqueueAvailabilityEvaluation = (
     reason: AvailabilityEvaluationReason,
     now: string = new Date().toISOString(),
@@ -842,9 +927,11 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       lastEvaluatedAvailability = decision.nextLastEvaluatedAvailability;
       startupBaselineEvaluated = decision.nextStartupBaselineEvaluated;
       if (!decision.shouldEvaluate) {
+        await tryDeliverPendingWakeNotification(now);
         return;
       }
       await processServiceHeartbeat(service, client, now, currentHealth);
+      await tryDeliverPendingWakeNotification(now);
     });
   };
   const runHeartbeatCheck = () => {
@@ -941,6 +1028,22 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       heartbeatTimer = setInterval(runHeartbeatCheck, 60_000);
       enqueueAvailabilityEvaluation('startup');
     },
+    handleSystemSleep: async (observedAt = new Date().toISOString()) => {
+      powerState = recordPowerEvent(powerState, 'sleep', observedAt);
+      lastEvaluatedAvailability = false;
+      enqueueConnectionEvent(async () => {
+        await sendServiceEventNotification(client, service, 'system_sleeping', observedAt, {
+          lastSleepAt: powerState.lastSleepAt,
+          lastWakeAt: powerState.lastWakeAt,
+        });
+      });
+    },
+    handleSystemWake: async (observedAt = new Date().toISOString()) => {
+      powerState = recordPowerEvent(powerState, 'wake', observedAt);
+      enqueueConnectionEvent(async () => {
+        await tryDeliverPendingWakeNotification(observedAt);
+      });
+    },
     close: async () => {
       if (!wsClient) {
         return;
@@ -948,6 +1051,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       manuallyClosed = true;
       lastEvaluatedAvailability = false;
       startupBaselineEvaluated = false;
+      powerState = {};
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
         heartbeatTimer = undefined;

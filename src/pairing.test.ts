@@ -69,6 +69,13 @@ cancellable = true
 `;
 }
 
+function createNoopPowerObserver() {
+  return {
+    start() {},
+    async close() {},
+  };
+}
+
 test('updateAllowedUsersInToml appends one actor and keeps duplicates out', () => {
   const source = `
 [bots.alpha]
@@ -92,7 +99,9 @@ test('authorizePairing updates TOML and triggers immediate reload without restar
   const configPath = join(directory, 'bots.toml');
   await writeFile(configPath, multiBotConfigText(directory));
 
-  const manager = await BotManager.create(configPath);
+  const manager = await BotManager.create(configPath, {
+    powerObserverFactory: createNoopPowerObserver,
+  } as any);
   const alpha = manager.getBot('alpha')!;
   const unauthorized = await alpha.handleMessage('new-user', '/tasks');
   const pairingCode = JSON.stringify(unauthorized.card).match(/\balpha-[A-Za-z0-9]{6}\b/u)?.[0];
@@ -123,7 +132,9 @@ test('authorizePairing leaves a code unused when reload fails', async () => {
   const configPath = join(directory, 'bots.toml');
   await writeFile(configPath, multiBotConfigText(directory));
 
-  const manager = await BotManager.create(configPath);
+  const manager = await BotManager.create(configPath, {
+    powerObserverFactory: createNoopPowerObserver,
+  } as any);
   const unauthorized = await manager.getBot('alpha')!.handleMessage('new-user', '/tasks');
   const pairingCode = JSON.stringify(unauthorized.card).match(/\balpha-[A-Za-z0-9]{6}\b/u)?.[0];
   assert.ok(pairingCode);
@@ -183,7 +194,9 @@ test('authorizePairing keeps pairing codes isolated per bot', async () => {
   const configPath = join(directory, 'bots.toml');
   await writeFile(configPath, multiBotConfigText(directory));
 
-  const manager = await BotManager.create(configPath);
+  const manager = await BotManager.create(configPath, {
+    powerObserverFactory: createNoopPowerObserver,
+  } as any);
   const unauthorized = await manager.getBot('beta')!.handleMessage('beta-new-user', '/tasks');
   const pairingCode = JSON.stringify(unauthorized.card).match(/\bbeta-[A-Za-z0-9]{6}\b/u)?.[0];
   assert.ok(pairingCode);

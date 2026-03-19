@@ -807,9 +807,14 @@ The system SHALL provide an operator-visible signal when WebSocket event ingress
 ### Requirement: Bot connection event subscriptions are persisted and reconciled from allowlists
 The system SHALL persist service-level event subscriptions separately from task and cron subscriptions, and SHALL reconcile them against each bot's `allowed_users`.
 
-#### Scenario: Allowlisted user receives default service event subscriptions
+#### Scenario: Allowlisted user receives default power event subscriptions
 - **WHEN** a bot starts or reloads configuration with an `allowed_users` entry not yet present in service event subscriptions
-- **THEN** the system creates enabled default subscriptions for that actor for `service_online` and `service_reconnected`
+- **THEN** the system creates enabled default subscriptions for that actor for `system_sleeping` and `system_woke`
+
+#### Scenario: Diagnostic reconnect subscription is not auto-enabled by default
+- **WHEN** a bot starts or reloads configuration with an `allowed_users` entry not yet present in service event subscriptions
+- **THEN** the system does not automatically enable `service_reconnected` for that actor
+- **AND** `service_reconnected` remains available as an optional diagnostic subscription
 
 #### Scenario: Removed allowlisted user loses service event subscriptions
 - **WHEN** a bot reloads configuration and an actor is no longer present in that bot's `allowed_users`
@@ -842,7 +847,23 @@ The system SHALL persist service connection-event state per bot so online-sessio
 - **AND** later run and cron tables remain compatible with that database
 
 ### Requirement: WebSocket connection transitions can emit service event notifications
-The system SHALL emit `service_online` from the first successful WebSocket connection in the current process session and SHALL emit `service_reconnected` from availability-success gaps rather than from reconnect/disconnect transition windows.
+The system SHALL emit power-event notifications for sleep and wake, SHALL keep `service_online` as the first successful connected event in a process session, and SHALL keep `service_reconnected` as a diagnostic availability-recovery event.
+
+#### Scenario: Observed sleep attempts a best-effort system_sleeping notification
+- **WHEN** the service observes that the host is entering sleep while it still has a runnable window
+- **THEN** the system attempts to emit one `system_sleeping` service event notification
+- **AND** failure to deliver that notification does not prevent later wake or reconnect notifications
+
+#### Scenario: Observed wake is deferred until availability is restored
+- **WHEN** the service observes a host wake event
+- **THEN** it records a pending wake notification for that bot runtime
+- **AND** it does not require immediate Feishu sendability at the same instant as the wake observation
+
+#### Scenario: Restored availability emits system_woke after a recorded wake
+- **WHEN** a pending wake notification exists for the bot
+- **AND** effective service availability becomes true after that wake
+- **THEN** the system emits one `system_woke` notification as soon as it can deliver it
+- **AND** it clears the pending wake notification after successful handling
 
 #### Scenario: First connected transition emits service_online once per session
 - **WHEN** a bot transitions into `connected` for the first time in the current service process session
@@ -860,6 +881,7 @@ The system SHALL emit `service_online` from the first successful WebSocket conne
 - **AND** a prior successful heartbeat timestamp exists
 - **AND** the elapsed time between the current successful heartbeat and the prior successful heartbeat is at least the global `server.service_reconnect_notification_threshold_ms`
 - **THEN** the system emits one `service_reconnected` event notification
+- **AND** that event remains part of the diagnostic service-event model even when it is not default-subscribed
 
 #### Scenario: Availability recovery triggers immediate reconnect evaluation
 - **WHEN** effective WebSocket availability transitions from unavailable to available because transport recovery or a new WebSocket ingress observation restores serviceability
@@ -922,4 +944,3 @@ The project SHALL provide a repeatable release packaging workflow that produces 
 - **THEN** it verifies the asset contains `.kfc-release.json`
 - **AND** it verifies required runtime entrypoints such as `src/index.ts`, `src/kfc.ts`, and `package.json`
 - **AND** it verifies the embedded `asset_name` matches the tarball filename
-

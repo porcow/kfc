@@ -11,6 +11,11 @@ import { KidsAlfredService, MemoryRunUpdateSink } from './service.ts';
 import { LaunchdCronController, type CronController } from './cron.ts';
 import { RunRepository } from './persistence/run-repository.ts';
 import { reconcilePendingServiceRefreshOperations } from './service-refresh.ts';
+import {
+  createMacOsPowerEventObserver,
+  type PowerEvent,
+  type PowerEventObserver,
+} from './power.ts';
 
 interface BotRuntime {
   service: KidsAlfredService;
@@ -20,6 +25,10 @@ interface BotRuntime {
 interface BotManagerOptions {
   updatesFactory?: (botId: string) => RunUpdateSink;
   bridgeFactory?: (service: KidsAlfredService) => Promise<BotBridge>;
+  powerObserverFactory?: (handlers: {
+    onSleep: (event: PowerEvent) => void;
+    onWake: (event: PowerEvent) => void;
+  }) => PowerEventObserver;
   cronControllerFactory?: (config: AppConfig['bots'][string], repository: RunRepository) => CronController;
 }
 
@@ -29,16 +38,19 @@ export class BotManager {
   private readonly configPath: string;
   private readonly updatesFactory: (botId: string) => RunUpdateSink;
   private readonly bridgeFactory: (service: KidsAlfredService) => Promise<BotBridge>;
+  private readonly powerObserverFactory: NonNullable<BotManagerOptions['powerObserverFactory']>;
   private readonly cronControllerFactory: (
     config: AppConfig['bots'][string],
     repository: RunRepository,
   ) => CronController;
   private webSocketsStarted = false;
+  private powerObserver?: PowerEventObserver;
 
   constructor(configPath: string, options: BotManagerOptions = {}) {
     this.configPath = configPath;
     this.updatesFactory = options.updatesFactory ?? (() => new MemoryRunUpdateSink());
     this.bridgeFactory = options.bridgeFactory ?? createFeishuSdkBridge;
+    this.powerObserverFactory = options.powerObserverFactory ?? createMacOsPowerEventObserver;
     this.cronControllerFactory =
       options.cronControllerFactory ??
       ((config, repository) => new LaunchdCronController(config, repository));
@@ -157,6 +169,10 @@ export class BotManager {
   }
 
   async close(): Promise<void> {
+    if (this.powerObserver) {
+      await this.powerObserver.close();
+      this.powerObserver = undefined;
+    }
     await Promise.allSettled(
       [...this.runtimes.values()].map(async (runtime) => {
         await runtime.bridge.close();
@@ -179,6 +195,7 @@ export class BotManager {
         [...this.runtimes.entries()].map(([botId, runtime]) => [botId, runtime.service]),
       ),
     );
+    this.ensurePowerObserverStarted();
   }
 
   private async buildRuntimes(config: AppConfig): Promise<Map<string, BotRuntime>> {
@@ -210,5 +227,24 @@ export class BotManager {
     for (const runtime of this.runtimes.values()) {
       runtime.service.setHealthSnapshotProvider(() => buildHealthSnapshot(this));
     }
+  }
+
+  private ensurePowerObserverStarted(): void {
+    if (this.powerObserver) {
+      return;
+    }
+    this.powerObserver = this.powerObserverFactory({
+      onSleep: (event) => {
+        for (const runtime of this.runtimes.values()) {
+          void runtime.bridge.handleSystemSleep(event.observedAt);
+        }
+      },
+      onWake: (event) => {
+        for (const runtime of this.runtimes.values()) {
+          void runtime.bridge.handleSystemWake(event.observedAt);
+        }
+      },
+    });
+    this.powerObserver.start();
   }
 }

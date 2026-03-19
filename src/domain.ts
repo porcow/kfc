@@ -242,7 +242,11 @@ export interface CronChatSubscriptionRecord {
   updatedAt: string;
 }
 
-export type ServiceEventType = 'service_online' | 'service_reconnected';
+export type ServiceEventType =
+  | 'service_online'
+  | 'service_reconnected'
+  | 'system_sleeping'
+  | 'system_woke';
 
 export interface ServiceEventSubscriptionRecord {
   actorId: string;

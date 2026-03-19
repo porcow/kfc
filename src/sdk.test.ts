@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from './test-compat.ts';
 
-import type { RunRecord } from './domain.ts';
+import type { RunRecord, ServiceEventType } from './domain.ts';
 import { buildRunStatusCard } from './feishu/cards.ts';
 import { formatFeishuTimestamp } from './feishu/timestamp.ts';
 import {
@@ -15,9 +15,11 @@ import {
   FeishuRunUpdateSink,
   FeishuTaskResultSink,
   planAvailabilityEvaluation,
+  processPendingWakeNotification,
   shouldEmitSdkDebugLog,
   processServiceHeartbeat,
   processServiceConnectionTransition,
+  recordPowerEvent,
 } from './feishu/sdk.ts';
 
 test('card action payload merges button values with top-level form values', () => {
@@ -751,6 +753,80 @@ test('development runtime keeps full sdk debug visibility', () => {
   );
 });
 
+test('power event state tracks latest sleep and wake observations', () => {
+  const afterSleep = recordPowerEvent({}, 'sleep', '2026-03-19T10:00:00.000Z');
+  assert.deepEqual(afterSleep, {
+    lastSleepAt: '2026-03-19T10:00:00.000Z',
+  });
+
+  const afterWake = recordPowerEvent(afterSleep, 'wake', '2026-03-19T10:05:00.000Z');
+  assert.deepEqual(afterWake, {
+    lastSleepAt: '2026-03-19T10:00:00.000Z',
+    lastWakeAt: '2026-03-19T10:05:00.000Z',
+    pendingWakeNotificationAt: '2026-03-19T10:05:00.000Z',
+  });
+});
+
+test('pending wake notification is deferred until availability is restored', async () => {
+  const deliveries: any[] = [];
+  const service = {
+    getBotId() {
+      return 'alpha';
+    },
+    getConfig() {
+      return {
+        loadedAt: '2026-03-19T09:55:00.000Z',
+      };
+    },
+    listServiceEventSubscriberActorIds(eventType: ServiceEventType) {
+      return eventType === 'system_woke' ? ['ou_a'] : [];
+    },
+    getWebSocketObservationHealth() {
+      return undefined;
+    },
+  };
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async create(request: any) {
+            deliveries.push(request);
+          },
+        },
+      },
+    },
+  };
+  let powerState = recordPowerEvent({}, 'wake', '2026-03-19T10:05:00.000Z');
+
+  powerState = await processPendingWakeNotification(
+    service as any,
+    client as any,
+    '2026-03-19T10:05:01.000Z',
+    {
+      state: 'reconnecting',
+      consecutiveReconnectFailures: 0,
+    } as any,
+    powerState,
+  );
+  assert.equal(deliveries.length, 0);
+  assert.equal(powerState.pendingWakeNotificationAt, '2026-03-19T10:05:00.000Z');
+
+  powerState = await processPendingWakeNotification(
+    service as any,
+    client as any,
+    '2026-03-19T10:05:02.000Z',
+    {
+      state: 'connected',
+      consecutiveReconnectFailures: 0,
+      lastConnectedAt: '2026-03-19T10:05:02.000Z',
+    } as any,
+    powerState,
+  );
+  assert.equal(deliveries.length, 1);
+  assert.ok(deliveries[0].data.content.includes('Bot 主机已唤醒'));
+  assert.equal(powerState.pendingWakeNotificationAt, undefined);
+});
+
 test('service connection transition emits a session-scoped online notification to allowlist subscribers', async () => {
   const deliveries: any[] = [];
   const serviceState: any = {};
@@ -770,7 +846,7 @@ test('service connection transition emits a session-scoped online notification t
     getServiceReconnectNotificationThresholdMs() {
       return 3600000;
     },
-    listServiceEventSubscriberActorIds(eventType: 'service_online' | 'service_reconnected') {
+    listServiceEventSubscriberActorIds(eventType: ServiceEventType) {
       return subscriptions[eventType];
     },
     getServiceEventState() {
@@ -855,7 +931,7 @@ test('service heartbeat uses a 1 hour default threshold for reconnect notificati
     getServiceReconnectNotificationThresholdMs() {
       return 3600000;
     },
-    listServiceEventSubscriberActorIds(eventType: 'service_online' | 'service_reconnected') {
+    listServiceEventSubscriberActorIds(eventType: ServiceEventType) {
       return eventType === 'service_reconnected' ? ['ou_a'] : [];
     },
     getServiceEventState() {
@@ -950,7 +1026,7 @@ test('service heartbeat respects explicit global reconnect threshold overrides',
     getServiceReconnectNotificationThresholdMs() {
       return 120000;
     },
-    listServiceEventSubscriberActorIds(eventType: 'service_online' | 'service_reconnected') {
+    listServiceEventSubscriberActorIds(eventType: ServiceEventType) {
       return eventType === 'service_reconnected' ? ['ou_a'] : [];
     },
     getServiceEventState() {
@@ -1019,7 +1095,7 @@ test('service heartbeat skips persistence and notifications while the bot is not
     getServiceReconnectNotificationThresholdMs() {
       return 300000;
     },
-    listServiceEventSubscriberActorIds(eventType: 'service_online' | 'service_reconnected') {
+    listServiceEventSubscriberActorIds(eventType: ServiceEventType) {
       return eventType === 'service_reconnected' ? ['ou_a'] : [];
     },
     getServiceEventState() {
@@ -1081,7 +1157,7 @@ test('service heartbeat treats recent websocket ingress as recovered availabilit
     getServiceReconnectNotificationThresholdMs() {
       return 120000;
     },
-    listServiceEventSubscriberActorIds(eventType: 'service_online' | 'service_reconnected') {
+    listServiceEventSubscriberActorIds(eventType: ServiceEventType) {
       return eventType === 'service_reconnected' ? ['ou_a'] : [];
     },
     getServiceEventState() {

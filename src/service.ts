@@ -884,8 +884,8 @@ export class KidsAlfredService {
       }
     }
     for (const actorId of allowed) {
-      this.repository.upsertServiceEventSubscription(actorId, 'service_online', true);
-      this.repository.upsertServiceEventSubscription(actorId, 'service_reconnected', true);
+      this.repository.upsertServiceEventSubscription(actorId, 'system_sleeping', true);
+      this.repository.upsertServiceEventSubscription(actorId, 'system_woke', true);
     }
   }
 

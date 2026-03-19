@@ -108,6 +108,12 @@ function createBridgeFactory(stateByBotId: Map<string, Record<string, unknown>[]
         health.state = 'connected';
         health.lastConnectedAt = '2026-03-12T12:00:00.000Z';
       },
+      async handleSystemSleep(observedAt?: string) {
+        bucket.push({ action: 'sleep', observedAt });
+      },
+      async handleSystemWake(observedAt?: string) {
+        bucket.push({ action: 'wake', observedAt });
+      },
       async close() {
         bucket.push({ action: 'close' });
         health.state = 'disconnected';
@@ -121,12 +127,21 @@ function createBridgeFactory(stateByBotId: Map<string, Record<string, unknown>[]
   };
 }
 
+function createNoopPowerObserver() {
+  return {
+    start() {},
+    async close() {},
+  };
+}
+
 test('manager loads multiple bots and keeps task catalogs isolated', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-manager-'));
   const configPath = join(directory, 'bots.toml');
   await writeFile(configPath, multiBotConfigText(directory));
 
-  const manager = await BotManager.create(configPath);
+  const manager = await BotManager.create(configPath, {
+    powerObserverFactory: createNoopPowerObserver,
+  } as any);
 
   assert.deepEqual(manager.listBotIds(), ['alpha', 'beta']);
   assert.equal(manager.getBot('alpha')?.getConfig().allowedUsers[0], 'operator-a');
@@ -142,7 +157,9 @@ test('manager reload is atomic across the full bot map', async () => {
   const configPath = join(directory, 'bots.toml');
   await writeFile(configPath, multiBotConfigText(directory));
 
-  const manager = await BotManager.create(configPath);
+  const manager = await BotManager.create(configPath, {
+    powerObserverFactory: createNoopPowerObserver,
+  } as any);
   assert.deepEqual(manager.listBotIds(), ['alpha', 'beta']);
 
   await writeFile(
@@ -216,7 +233,9 @@ test('manager keeps each bot run state and sqlite store isolated', async () => {
   const configPath = join(directory, 'bots.toml');
   await writeFile(configPath, multiBotConfigText(directory));
 
-  const manager = await BotManager.create(configPath);
+  const manager = await BotManager.create(configPath, {
+    powerObserverFactory: createNoopPowerObserver,
+  } as any);
 
   const alpha = manager.getBot('alpha')!;
   const beta = manager.getBot('beta')!;
@@ -262,6 +281,7 @@ test('manager reload explicitly starts replacement websocket clients and close d
 
   const manager = await BotManager.create(configPath, {
     bridgeFactory: createBridgeFactory(events),
+    powerObserverFactory: createNoopPowerObserver,
   } as any);
 
   await manager.startWebSockets();
@@ -341,6 +361,7 @@ auto_start = true
         },
       };
     },
+    powerObserverFactory: createNoopPowerObserver,
   } as any);
 
   assert.deepEqual(reconcileCalls, ['alpha', 'beta']);
@@ -349,12 +370,66 @@ auto_start = true
   await manager.close();
 });
 
+test('manager forwards observed power events to all bot bridges', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-power-events-'));
+  const configPath = join(directory, 'bots.toml');
+  await writeFile(configPath, multiBotConfigText(directory));
+  const events = new Map<string, Record<string, unknown>[]>();
+  let handlers:
+    | {
+        onSleep(event: { observedAt: string }): void;
+        onWake(event: { observedAt: string }): void;
+      }
+    | undefined;
+  let observerStarted = false;
+  let observerClosed = false;
+
+  const manager = await BotManager.create(configPath, {
+    bridgeFactory: createBridgeFactory(events),
+    powerObserverFactory(nextHandlers: any) {
+      handlers = nextHandlers;
+      return {
+        start() {
+          observerStarted = true;
+        },
+        async close() {
+          observerClosed = true;
+        },
+      };
+    },
+  } as any);
+
+  assert.equal(observerStarted, true);
+  handlers?.onSleep({ observedAt: '2026-03-19T10:00:00.000Z' });
+  handlers?.onWake({ observedAt: '2026-03-19T10:05:00.000Z' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(
+    events.get('alpha')?.slice(-2),
+    [
+      { action: 'sleep', observedAt: '2026-03-19T10:00:00.000Z' },
+      { action: 'wake', observedAt: '2026-03-19T10:05:00.000Z' },
+    ],
+  );
+  assert.deepEqual(
+    events.get('beta')?.slice(-2),
+    [
+      { action: 'sleep', observedAt: '2026-03-19T10:00:00.000Z' },
+      { action: 'wake', observedAt: '2026-03-19T10:05:00.000Z' },
+    ],
+  );
+
+  await manager.close();
+  assert.equal(observerClosed, true);
+});
+
 test('health endpoint reports bot-scoped websocket health', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-health-'));
   const configPath = join(directory, 'bots.toml');
   await writeFile(configPath, multiBotConfigText(directory));
   const manager = await BotManager.create(configPath, {
     bridgeFactory: createBridgeFactory(new Map()),
+    powerObserverFactory: createNoopPowerObserver,
   } as any);
   const server = await createAppServer(manager, { startWebSockets: true });
   const handler = server.listeners('request')[0] as (request: any, response: any) => void;
@@ -396,6 +471,8 @@ test('health endpoint distinguishes websocket ingress availability and surfaces 
     bridgeFactory: async (service: any) => ({
       botId: service.getBotId(),
       async startWebSocketClient() {},
+      async handleSystemSleep() {},
+      async handleSystemWake() {},
       async close() {},
       getWebSocketHealth() {
         return {
@@ -410,6 +487,7 @@ test('health endpoint distinguishes websocket ingress availability and surfaces 
         };
       },
     }),
+    powerObserverFactory: createNoopPowerObserver,
   } as any);
   const server = await createAppServer(manager, { startWebSockets: false });
   const handler = server.listeners('request')[0] as (request: any, response: any) => void;

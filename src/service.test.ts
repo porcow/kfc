@@ -309,7 +309,7 @@ test('service reconciles allowed users into default service event subscriptions'
   const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-service-event-subscriptions-'));
   const databasePath = join(directory, 'runs.sqlite');
   const repository = new RunRepository(databasePath);
-  repository.upsertServiceEventSubscription('stale-user', 'service_online', true);
+  repository.upsertServiceEventSubscription('stale-user', 'system_sleeping', true);
   repository.upsertServiceEventSubscription('stale-user', 'service_reconnected', true);
   const botConfig = createBotConfig('alpha', databasePath);
   botConfig.allowedUsers = ['operator-1', 'operator-2'];
@@ -324,15 +324,17 @@ test('service reconciles allowed users into default service event subscriptions'
 
   service.reconcileServiceEventSubscriptions();
 
-  assert.deepEqual(service.listServiceEventSubscriberActorIds('service_online'), [
+  assert.deepEqual(service.listServiceEventSubscriberActorIds('system_sleeping'), [
     'operator-1',
     'operator-2',
   ]);
-  assert.deepEqual(service.listServiceEventSubscriberActorIds('service_reconnected'), [
+  assert.deepEqual(service.listServiceEventSubscriberActorIds('system_woke'), [
     'operator-1',
     'operator-2',
   ]);
-  assert.equal(repository.getServiceEventSubscription('stale-user', 'service_online'), undefined);
+  assert.deepEqual(service.listServiceEventSubscriberActorIds('service_online'), []);
+  assert.deepEqual(service.listServiceEventSubscriberActorIds('service_reconnected'), []);
+  assert.equal(repository.getServiceEventSubscription('stale-user', 'system_sleeping'), undefined);
 
   await service.close();
 });

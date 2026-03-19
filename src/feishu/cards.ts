@@ -383,22 +383,55 @@ export function buildVersionCard(version: string): CardResponse {
 export function buildServiceEventNotificationCard(options: {
   eventType: ServiceEventType;
   botId: string;
-  connectedAt: string;
+  eventAt: string;
   host: string;
   loadedAt?: string;
   heartbeatGapMs?: number;
   activeIngress?: 'websocket' | 'unknown';
+  lastSleepAt?: string;
+  lastWakeAt?: string;
 }): Record<string, unknown> {
   if (options.eventType === 'service_online') {
     const lines = [
       `Bot: **${options.botId}**`,
-      `Connected at: \`${formatFeishuTimestamp(options.connectedAt)}\``,
+      `Connected at: \`${formatFeishuTimestamp(options.eventAt)}\``,
       `Host: \`${options.host}\``,
     ];
     if (options.loadedAt) {
       lines.push(`Loaded at: \`${formatFeishuTimestamp(options.loadedAt)}\``);
     }
     return baseCard('Bot 已上线', [buildMarkdown(lines.join('\n'))]);
+  }
+
+  if (options.eventType === 'system_sleeping') {
+    return baseCard(
+      'Bot 主机即将休眠',
+      [
+        buildMarkdown(
+          [
+            `Bot: **${options.botId}**`,
+            `Sleep observed at: \`${formatFeishuTimestamp(options.eventAt)}\``,
+            `Host: \`${options.host}\``,
+          ].join('\n'),
+        ),
+      ],
+    );
+  }
+
+  if (options.eventType === 'system_woke') {
+    const lines = [
+      `Bot: **${options.botId}**`,
+      `Wake observed at: \`${formatFeishuTimestamp(options.eventAt)}\``,
+      `Recovered ingress: **${options.activeIngress === 'websocket' ? 'websocket' : 'unknown'}**`,
+      `Host: \`${options.host}\``,
+    ];
+    if (options.lastSleepAt) {
+      lines.push(`Last sleep: \`${formatFeishuTimestamp(options.lastSleepAt)}\``);
+    }
+    if (options.lastWakeAt) {
+      lines.push(`Last wake: \`${formatFeishuTimestamp(options.lastWakeAt)}\``);
+    }
+    return baseCard('Bot 主机已唤醒', [buildMarkdown(lines.join('\n'))]);
   }
 
   const heartbeatGap = formatShortDuration(options.heartbeatGapMs ?? 0);
@@ -408,7 +441,7 @@ export function buildServiceEventNotificationCard(options: {
       buildMarkdown(
         [
           `Bot: **${options.botId}**`,
-          `Reconnected at: \`${formatFeishuTimestamp(options.connectedAt)}\``,
+          `Reconnected at: \`${formatFeishuTimestamp(options.eventAt)}\``,
           `Heartbeat gap: **${heartbeatGap}**`,
           `Recovery ingress: **${options.activeIngress === 'websocket' ? 'websocket' : 'unknown'}**`,
           `Host: \`${options.host}\``,
