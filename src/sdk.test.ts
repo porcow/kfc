@@ -20,6 +20,7 @@ import {
   processServiceHeartbeat,
   processServiceConnectionTransition,
   recordPowerEvent,
+  transitionPowerNotificationState,
 } from './feishu/sdk.ts';
 
 test('card action payload merges button values with top-level form values', () => {
@@ -757,14 +758,60 @@ test('power event state tracks latest sleep and wake observations', () => {
   const afterSleep = recordPowerEvent({}, 'sleep', '2026-03-19T10:00:00.000Z');
   assert.deepEqual(afterSleep, {
     lastSleepAt: '2026-03-19T10:00:00.000Z',
+    phase: 'sleeping',
+    lastSleepNotificationAt: '2026-03-19T10:00:00.000Z',
   });
 
   const afterWake = recordPowerEvent(afterSleep, 'wake', '2026-03-19T10:05:00.000Z');
   assert.deepEqual(afterWake, {
     lastSleepAt: '2026-03-19T10:00:00.000Z',
     lastWakeAt: '2026-03-19T10:05:00.000Z',
-    pendingWakeNotificationAt: '2026-03-19T10:05:00.000Z',
+    phase: 'awake',
+    lastSleepNotificationAt: '2026-03-19T10:00:00.000Z',
+    pendingWakeNotification: {
+      wakeObservedAt: '2026-03-19T10:05:00.000Z',
+      lastSleepAtSnapshot: '2026-03-19T10:00:00.000Z',
+      lastWakeAtSnapshot: '2026-03-19T10:05:00.000Z',
+    },
   });
+});
+
+test('repeated sleep observations in one sleep phase are suppressed', () => {
+  const first = transitionPowerNotificationState({}, 'sleep', '2026-03-19T10:00:00.000Z', {
+    dedupWindowMs: 30000,
+  });
+  assert.equal(first.notification, 'system_sleeping');
+  assert.equal(first.state.phase, 'sleeping');
+
+  const second = transitionPowerNotificationState(
+    first.state,
+    'sleep',
+    '2026-03-19T10:00:08.000Z',
+    {
+      dedupWindowMs: 30000,
+    },
+  );
+  assert.equal(second.notification, 'none');
+  assert.equal(second.state.phase, 'sleeping');
+  assert.equal(second.state.lastSleepAt, '2026-03-19T10:00:08.000Z');
+});
+
+test('a newer sleep clears an older pending wake', () => {
+  const woke = transitionPowerNotificationState({}, 'wake', '2026-03-19T10:05:00.000Z', {
+    dedupWindowMs: 30000,
+  });
+  assert.equal(woke.notification, 'pending_wake');
+  assert.ok(woke.state.pendingWakeNotification);
+
+  const sleptAgain = transitionPowerNotificationState(
+    woke.state,
+    'sleep',
+    '2026-03-19T10:05:20.000Z',
+    {
+      dedupWindowMs: 30000,
+    },
+  );
+  assert.equal(sleptAgain.state.pendingWakeNotification, undefined);
 });
 
 test('pending wake notification is deferred until availability is restored', async () => {
@@ -796,7 +843,8 @@ test('pending wake notification is deferred until availability is restored', asy
       },
     },
   };
-  let powerState = recordPowerEvent({}, 'wake', '2026-03-19T10:05:00.000Z');
+  let powerState = recordPowerEvent({}, 'sleep', '2026-03-19T10:00:00.000Z');
+  powerState = recordPowerEvent(powerState, 'wake', '2026-03-19T10:05:00.000Z');
 
   powerState = await processPendingWakeNotification(
     service as any,
@@ -809,8 +857,9 @@ test('pending wake notification is deferred until availability is restored', asy
     powerState,
   );
   assert.equal(deliveries.length, 0);
-  assert.equal(powerState.pendingWakeNotificationAt, '2026-03-19T10:05:00.000Z');
+  assert.equal(powerState.pendingWakeNotification?.wakeObservedAt, '2026-03-19T10:05:00.000Z');
 
+  powerState.lastSleepAt = '2026-03-19T10:08:00.000Z';
   powerState = await processPendingWakeNotification(
     service as any,
     client as any,
@@ -823,8 +872,20 @@ test('pending wake notification is deferred until availability is restored', asy
     powerState,
   );
   assert.equal(deliveries.length, 1);
-  assert.ok(deliveries[0].data.content.includes('Bot 主机已唤醒'));
-  assert.equal(powerState.pendingWakeNotificationAt, undefined);
+  const deliveredCard = JSON.parse(deliveries[0].data.content);
+  assert.equal(deliveredCard.header.title.content, 'Bot 主机已唤醒');
+  const deliveredMarkdown = deliveredCard.elements[0].content;
+  assert.ok(
+    deliveredMarkdown.includes(
+      `Last sleep: \`${formatFeishuTimestamp('2026-03-19T10:00:00.000Z')}\``,
+    ),
+  );
+  assert.ok(
+    deliveredMarkdown.includes(
+      `Last wake: \`${formatFeishuTimestamp('2026-03-19T10:05:00.000Z')}\``,
+    ),
+  );
+  assert.equal(powerState.pendingWakeNotification, undefined);
 });
 
 test('service connection transition emits a session-scoped online notification to allowlist subscribers', async () => {

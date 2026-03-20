@@ -849,21 +849,58 @@ The system SHALL persist service connection-event state per bot so online-sessio
 ### Requirement: WebSocket connection transitions can emit service event notifications
 The system SHALL emit power-event notifications for sleep and wake, SHALL keep `service_online` as the first successful connected event in a process session, and SHALL keep `service_reconnected` as a diagnostic availability-recovery event.
 
+#### Scenario: Only accepted observations can advance the power notification state machine
+- **WHEN** the power observer recognizes a `sleep` or `wake` log line
+- **THEN** the system first evaluates that observation against the current in-memory power phase
+- **AND** only accepted observations are allowed to create, replace, or cancel operator-facing power notifications
+- **AND** repeated observations that do not advance the phase are treated as diagnostic-only
+
 #### Scenario: Observed sleep attempts a best-effort system_sleeping notification
 - **WHEN** the service observes that the host is entering sleep while it still has a runnable window
 - **THEN** the system attempts to emit one `system_sleeping` service event notification
 - **AND** failure to deliver that notification does not prevent later wake or reconnect notifications
+
+#### Scenario: One sleep phase emits at most one system_sleeping notification
+- **WHEN** the power observer records one or more sleep observations without an accepted intervening wake phase
+- **THEN** the system transitions into a `sleeping` phase once
+- **AND** it attempts at most one best-effort `system_sleeping` notification for that phase
 
 #### Scenario: Observed wake is deferred until availability is restored
 - **WHEN** the service observes a host wake event
 - **THEN** it records a pending wake notification for that bot runtime
 - **AND** it does not require immediate Feishu sendability at the same instant as the wake observation
 
+#### Scenario: A newer sleep clears any older pending wake
+- **WHEN** the system has a pending wake notification from an earlier wake observation
+- **AND** a newer sleep transition is accepted before that wake notification is delivered
+- **THEN** the system clears the pending wake notification as stale
+- **AND** it does not keep it eligible for later delivery
+
+#### Scenario: Pending wake notification stores immutable wake snapshot context
+- **WHEN** a wake observation is accepted and the system records pending wake state
+- **THEN** that pending wake state includes immutable wake-local timestamps needed for eventual operator rendering
+- **AND** later diagnostic power-state updates do not mutate the wake notification context
+
 #### Scenario: Restored availability emits system_woke after a recorded wake
 - **WHEN** a pending wake notification exists for the bot
 - **AND** effective service availability becomes true after that wake
 - **THEN** the system emits one `system_woke` notification as soon as it can deliver it
 - **AND** it clears the pending wake notification after successful handling
+
+#### Scenario: Repeated wake observations within one awake phase do not enqueue duplicate notifications
+- **WHEN** the power observer records multiple wake observations while the system is already in the same accepted `awake` phase and has no stale pending wake to replace
+- **THEN** the system does not enqueue duplicate `system_woke` notifications for those repeated wake observations
+
+#### Scenario: Short-window flapping does not become a burst of operator notifications
+- **WHEN** recognized power observations flap across sleep and wake in a short interval characteristic of dark-wake or noisy transition churn
+- **THEN** the service may suppress additional operator-facing notifications within a short dedup window
+- **AND** this suppression augments phase gating rather than replacing it
+
+#### Scenario: Sleep-side and wake-side dedup do not have identical operator semantics
+- **WHEN** the service applies short-window deduplication to power notifications
+- **THEN** repeated sleep observations are treated primarily as duplicate notifications to suppress
+- **AND** repeated wake observations are treated primarily as wake candidates to coalesce or replace before delivery
+- **AND** the implementation is not required to use one identical notification rule for both directions
 
 #### Scenario: First connected transition emits service_online once per session
 - **WHEN** a bot transitions into `connected` for the first time in the current service process session

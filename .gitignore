@@ -6,3 +6,4 @@ data/
 npm-debug.log*
 .codex/
 openspec/changes/archive/
+.DS_Store

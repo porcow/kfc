@@ -270,11 +270,27 @@ The system SHALL proactively notify subscribed authorized users about host power
 - **THEN** the system sends a proactive Feishu notification to each subscribed user for event type `system_sleeping`
 - **AND** the notification is best-effort rather than guaranteed
 
+#### Scenario: Repeated sleep observations in one sleep phase do not create duplicate user notifications
+- **WHEN** the host power observer reports multiple sleep observations before any later wake phase is accepted
+- **THEN** the system sends at most one proactive Feishu notification of type `system_sleeping` for that sleep phase
+- **AND** later duplicate sleep observations are treated as diagnostic-only
+
 #### Scenario: Bot sends a wake notification after wake is observed and deliverability returns
 - **WHEN** the host power observer reports that the machine has woken
 - **AND** the bot later regains enough effective availability to deliver Feishu notifications
 - **THEN** the system sends a proactive Feishu notification to each subscribed user for event type `system_woke`
 - **AND** it does so as soon as practical after availability is restored
+
+#### Scenario: Pending wake notification is superseded by a later sleep
+- **WHEN** the host power observer records a wake and the corresponding `system_woke` notification has not yet been delivered
+- **AND** the host power observer later records a newer sleep phase before wake delivery occurs
+- **THEN** the system cancels the older pending wake notification
+- **AND** it does not later send that stale `system_woke` notification
+
+#### Scenario: Delivered wake notification uses wake-local snapshot context
+- **WHEN** the system eventually delivers a deferred `system_woke` notification
+- **THEN** the rendered Feishu card uses the wake event's captured snapshot timestamps
+- **AND** it does not render `Last sleep` or `Last wake` values taken from later mutable power state
 
 #### Scenario: Bot sends an online notification to subscribed users
 - **WHEN** a bot first transitions into `connected` during the current main-service process session

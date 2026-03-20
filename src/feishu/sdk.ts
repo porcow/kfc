@@ -194,11 +194,28 @@ export interface AvailabilityEvaluationDecision {
   nextStartupBaselineEvaluated: boolean;
 }
 
+export type PowerPhase = 'unknown' | 'sleeping' | 'awake';
+
+export interface PendingWakeNotification {
+  wakeObservedAt: string;
+  lastSleepAtSnapshot?: string;
+  lastWakeAtSnapshot: string;
+}
+
 export interface PowerNotificationState {
   lastSleepAt?: string;
   lastWakeAt?: string;
-  pendingWakeNotificationAt?: string;
+  phase?: PowerPhase;
+  lastSleepNotificationAt?: string;
+  pendingWakeNotification?: PendingWakeNotification;
 }
+
+export interface PowerNotificationTransition {
+  state: PowerNotificationState;
+  notification: 'none' | 'system_sleeping' | 'pending_wake';
+}
+
+const POWER_EVENT_DEDUP_WINDOW_MS = 30_000;
 
 function stringifyLogMessage(message: unknown): string {
   if (typeof message === 'string') {
@@ -237,6 +254,18 @@ function withWarning(health: BotWebSocketHealth): BotWebSocketHealth {
 
 function containsAny(text: string, patterns: readonly string[]): boolean {
   return patterns.some((pattern) => text.includes(pattern));
+}
+
+function isWithinPowerDedupWindow(
+  previousAt: string | undefined,
+  nextAt: string,
+  dedupWindowMs: number,
+): boolean {
+  if (!previousAt) {
+    return false;
+  }
+  const deltaMs = new Date(nextAt).valueOf() - new Date(previousAt).valueOf();
+  return deltaMs >= 0 && deltaMs < dedupWindowMs;
 }
 
 export function isDevelopmentRuntime(): boolean {
@@ -524,16 +553,74 @@ export function recordPowerEvent(
   eventType: 'sleep' | 'wake',
   observedAt: string,
 ): PowerNotificationState {
+  return transitionPowerNotificationState(state, eventType, observedAt).state;
+}
+
+export function transitionPowerNotificationState(
+  state: PowerNotificationState,
+  eventType: 'sleep' | 'wake',
+  observedAt: string,
+  options: {
+    dedupWindowMs?: number;
+  } = {},
+): PowerNotificationTransition {
+  const dedupWindowMs = options.dedupWindowMs ?? POWER_EVENT_DEDUP_WINDOW_MS;
+  const currentPhase = state.phase ?? 'unknown';
+
   if (eventType === 'sleep') {
-    return {
+    const nextState: PowerNotificationState = {
       ...state,
       lastSleepAt: observedAt,
     };
+    if (currentPhase === 'sleeping') {
+      return {
+        state: nextState,
+        notification: 'none',
+      };
+    }
+    const transitionedState: PowerNotificationState = {
+      ...nextState,
+      phase: 'sleeping',
+    };
+    delete transitionedState.pendingWakeNotification;
+    if (
+      isWithinPowerDedupWindow(state.lastSleepNotificationAt, observedAt, dedupWindowMs)
+    ) {
+      return {
+        state: transitionedState,
+        notification: 'none',
+      };
+    }
+    return {
+      state: {
+        ...transitionedState,
+        lastSleepNotificationAt: observedAt,
+      },
+      notification: 'system_sleeping',
+    };
   }
-  return {
+
+  const nextState: PowerNotificationState = {
     ...state,
     lastWakeAt: observedAt,
-    pendingWakeNotificationAt: observedAt,
+  };
+  if (currentPhase === 'awake' && !state.pendingWakeNotification) {
+    return {
+      state: nextState,
+      notification: 'none',
+    };
+  }
+  return {
+    state: {
+      ...nextState,
+      phase: 'awake',
+      pendingWakeNotification: {
+        wakeObservedAt: observedAt,
+        lastSleepAtSnapshot: state.lastSleepAt,
+        lastWakeAtSnapshot: observedAt,
+      },
+    },
+    notification: 'pending_wake',
   };
 }
 
@@ -544,7 +631,7 @@ export async function processPendingWakeNotification(
   currentHealth: BotWebSocketHealth,
   powerState: PowerNotificationState,
 ): Promise<PowerNotificationState> {
-  if (!powerState.pendingWakeNotificationAt) {
+  if (!powerState.pendingWakeNotification) {
     return powerState;
   }
   const websocketHealth = getWebSocketHealthForService(service, currentHealth, now);
@@ -556,17 +643,17 @@ export async function processPendingWakeNotification(
     client,
     service,
     'system_woke',
-    powerState.pendingWakeNotificationAt,
+    powerState.pendingWakeNotification.wakeObservedAt,
     {
       activeIngress: availability.activeIngress,
-      lastSleepAt: powerState.lastSleepAt,
-      lastWakeAt: powerState.lastWakeAt,
+      lastSleepAt: powerState.pendingWakeNotification.lastSleepAtSnapshot,
+      lastWakeAt: powerState.pendingWakeNotification.lastWakeAtSnapshot,
     },
   );
   if (delivery.actorCount === 0 || delivery.deliveredCount > 0) {
     return {
       ...powerState,
-      pendingWakeNotificationAt: undefined,
+      pendingWakeNotification: undefined,
     };
   }
   return powerState;
@@ -1029,8 +1116,12 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       enqueueAvailabilityEvaluation('startup');
     },
     handleSystemSleep: async (observedAt = new Date().toISOString()) => {
-      powerState = recordPowerEvent(powerState, 'sleep', observedAt);
+      const transition = transitionPowerNotificationState(powerState, 'sleep', observedAt);
+      powerState = transition.state;
       lastEvaluatedAvailability = false;
+      if (transition.notification !== 'system_sleeping') {
+        return;
+      }
       enqueueConnectionEvent(async () => {
         await sendServiceEventNotification(client, service, 'system_sleeping', observedAt, {
           lastSleepAt: powerState.lastSleepAt,
@@ -1039,7 +1130,7 @@ export async function createFeishuSdkBridge(service: KidsAlfredService): Promise
       });
     },
     handleSystemWake: async (observedAt = new Date().toISOString()) => {
-      powerState = recordPowerEvent(powerState, 'wake', observedAt);
+      powerState = transitionPowerNotificationState(powerState, 'wake', observedAt).state;
       enqueueConnectionEvent(async () => {
         await tryDeliverPendingWakeNotification(observedAt);
       });

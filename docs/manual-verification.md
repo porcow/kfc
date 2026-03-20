@@ -30,22 +30,24 @@
 7. Confirm allowlisted users receive `system_sleeping` and `system_woke` subscriptions by default without manually enabling a diagnostic reconnect subscription.
 8. Close the MacBook lid or otherwise trigger host sleep and confirm a best-effort `system_sleeping` notification is attempted before the host fully sleeps.
 9. Re-open the MacBook and confirm `system_woke` is delivered as soon as the bot regains enough WebSocket availability to notify Feishu.
-10. Confirm `service_online` remains available as a diagnostic event and is emitted only once after the bot first reaches `connected` in the current main-service process session.
-11. Confirm `service_reconnected` is not emitted for short reconnect churn, and is emitted only after a successful availability evaluation occurs following a gap greater than the configured threshold when that diagnostic subscription is explicitly enabled.
-12. Confirm a bot that has already been running long enough to establish a successful-heartbeat baseline can sleep or disconnect past the threshold, recover availability, and emit `service_reconnected` shortly after recovery rather than waiting for the next 60-second timer boundary when diagnostic reconnect notifications are enabled.
-13. Send `/tasks` from an allowed Feishu user in bot A and confirm bot A's one-shot task list card arrives.
-14. Send `/tasks` from an allowed Feishu user in bot B and confirm bot B's task list is different if configured differently.
-15. For a bot that explicitly configures task `sc`, send `/run sc` from an allowed Feishu user and confirm:
+10. During one sleep cycle, confirm repeated `powerd` sleep observations do not fan out into multiple `system_sleeping` notifications.
+11. Confirm a later sleep cancels any older undelivered wake so `system_woke` is not emitted with timestamps from a superseded wake cycle.
+12. Confirm `service_online` remains available as a diagnostic event and is emitted only once after the bot first reaches `connected` in the current main-service process session.
+13. Confirm `service_reconnected` is not emitted for short reconnect churn, and is emitted only after a successful availability evaluation occurs following a gap greater than the configured threshold when that diagnostic subscription is explicitly enabled.
+14. Confirm a bot that has already been running long enough to establish a successful-heartbeat baseline can sleep or disconnect past the threshold, recover availability, and emit `service_reconnected` shortly after recovery rather than waiting for the next 60-second timer boundary when diagnostic reconnect notifications are enabled.
+15. Send `/tasks` from an allowed Feishu user in bot A and confirm bot A's one-shot task list card arrives.
+16. Send `/tasks` from an allowed Feishu user in bot B and confirm bot B's task list is different if configured differently.
+17. For a bot that explicitly configures task `sc`, send `/run sc` from an allowed Feishu user and confirm:
    - the bot returns the normal confirmation card rather than using a dedicated `/sc` shortcut
    - confirming the request captures the current screen and sends the screenshot image back to the same chat
    - the temporary screenshot file under `~/.kfc/data/screenshot-YYYYMMDD-HHmmss.png` is deleted after successful image delivery
    - if Feishu image upload or send fails, the run surfaces a clear failure and the screenshot file remains on disk for debugging
-16. For a bot that explicitly configures task `shell`, send `/shell echo "hello world"` and confirm:
+18. For a bot that explicitly configures task `shell`, send `/shell echo "hello world"` and confirm:
    - the bot returns the normal one-shot confirmation card with a bounded preview of the submitted script body
    - confirming the request executes the shell script locally through a temporary materialized script file
    - the resulting run remains queryable through `/run-status RUN_ID`
    - an empty `/shell` submission is rejected before confirmation with a clear `script content is required` style error
-17. For a bot that explicitly configures task `osascript`, send `/osascript display notification "Hello World" with title "Test"` and confirm:
+19. For a bot that explicitly configures task `osascript`, send `/osascript display notification "Hello World" with title "Test"` and confirm:
    - the bot returns the normal one-shot confirmation card with a bounded preview of the submitted AppleScript body
    - confirming the request executes the AppleScript locally through `osascript` using a temporary materialized script file
    - the resulting run remains queryable through `/run-status RUN_ID`
