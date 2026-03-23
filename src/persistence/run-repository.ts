@@ -11,6 +11,7 @@ import type {
   PairingRecord,
   RunRecord,
   RunState,
+  ServiceEventQuietHoursRecord,
   ServiceEventStateRecord,
   ServiceEventSubscriptionRecord,
   ServiceEventType,
@@ -90,6 +91,14 @@ export class RunRepository {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (actor_id, event_type)
+      );
+      CREATE TABLE IF NOT EXISTS service_event_quiet_hours (
+        actor_id TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL,
+        from_time TEXT NOT NULL,
+        to_time TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS service_event_state (
         singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
@@ -575,6 +584,63 @@ export class RunRepository {
     return Number(result.changes ?? 0);
   }
 
+  upsertServiceEventQuietHours(
+    actorId: string,
+    fromTime: string,
+    toTime: string,
+    enabled = true,
+    updatedAt = new Date().toISOString(),
+  ): ServiceEventQuietHoursRecord {
+    const current = this.getServiceEventQuietHours(actorId);
+    const createdAt = current?.createdAt ?? updatedAt;
+    this.database
+      .prepare(`
+        INSERT INTO service_event_quiet_hours (
+          actor_id, enabled, from_time, to_time, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(actor_id) DO UPDATE SET
+          enabled = excluded.enabled,
+          from_time = excluded.from_time,
+          to_time = excluded.to_time,
+          updated_at = excluded.updated_at
+      `)
+      .run(actorId, enabled ? 1 : 0, fromTime, toTime, createdAt, updatedAt);
+    return this.getServiceEventQuietHours(actorId)!;
+  }
+
+  getServiceEventQuietHours(actorId: string): ServiceEventQuietHoursRecord | undefined {
+    const row = this.database
+      .prepare(
+        `
+          SELECT * FROM service_event_quiet_hours
+          WHERE actor_id = ?
+        `,
+      )
+      .get(actorId) as Record<string, unknown> | undefined;
+    return row ? this.toServiceEventQuietHoursRecord(row) : undefined;
+  }
+
+  setServiceEventQuietHoursEnabled(
+    actorId: string,
+    enabled: boolean,
+    updatedAt = new Date().toISOString(),
+  ): ServiceEventQuietHoursRecord | undefined {
+    const current = this.getServiceEventQuietHours(actorId);
+    if (!current) {
+      return undefined;
+    }
+    this.database
+      .prepare(
+        `
+          UPDATE service_event_quiet_hours
+          SET enabled = ?, updated_at = ?
+          WHERE actor_id = ?
+        `,
+      )
+      .run(enabled ? 1 : 0, updatedAt, actorId);
+    return this.getServiceEventQuietHours(actorId);
+  }
+
   getServiceEventState(): ServiceEventStateRecord | undefined {
     const row = this.database
       .prepare('SELECT * FROM service_event_state WHERE singleton_id = 1')
@@ -745,6 +811,19 @@ export class RunRepository {
       lastReconnectedNotifiedAt: row.last_reconnected_notified_at
         ? String(row.last_reconnected_notified_at)
         : undefined,
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private toServiceEventQuietHoursRecord(
+    row: Record<string, unknown>,
+  ): ServiceEventQuietHoursRecord {
+    return {
+      actorId: String(row.actor_id),
+      enabled: Number(row.enabled) === 1,
+      fromTime: String(row.from_time),
+      toTime: String(row.to_time),
+      createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };
   }

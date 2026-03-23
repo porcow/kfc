@@ -8,6 +8,7 @@ import type {
   BotWebSocketHealth,
   RunRecord,
   RunUpdateSink,
+  ServiceEventQuietHoursRecord,
   ServiceEventType,
   TaskDefinition,
   TaskResult,
@@ -17,6 +18,7 @@ import type {
 import type { KidsAlfredService } from '../service.ts';
 import { buildRunStatusCard, buildServiceEventNotificationCard } from './cards.ts';
 import { buildAvailability, isIngressObservationStale } from '../health.ts';
+import { isQuietHoursActiveAt, isQuietHoursMutedEventType } from '../quiet-hours.ts';
 
 interface RequestHandler {
   (request: IncomingMessage, response: ServerResponse): void;
@@ -168,6 +170,7 @@ type ServiceEventAwareService = KidsAlfredService &
   Pick<
     KidsAlfredService,
     | 'listServiceEventSubscriberActorIds'
+    | 'getServiceEventQuietHours'
     | 'getServiceEventState'
     | 'saveServiceEventState'
     | 'getServiceReconnectNotificationThresholdMs'
@@ -476,7 +479,11 @@ async function sendServiceEventNotification(
   } = {},
 ): Promise<{ actorCount: number; deliveredCount: number }> {
   const actorIds = service.listServiceEventSubscriberActorIds(eventType);
-  if (actorIds.length === 0) {
+  const eligibleActorIds = actorIds.filter((actorId) => {
+    const quietHours = service.getServiceEventQuietHours?.(actorId);
+    return !shouldSuppressServiceEventNotification(quietHours, eventType, eventAt);
+  });
+  if (eligibleActorIds.length === 0) {
     return {
       actorCount: 0,
       deliveredCount: 0,
@@ -494,7 +501,7 @@ async function sendServiceEventNotification(
     lastWakeAt: options.lastWakeAt,
   });
   let deliveredCount = 0;
-  for (const actorId of actorIds) {
+  for (const actorId of eligibleActorIds) {
     await sendInteractiveCard(
       client,
       {
@@ -519,9 +526,20 @@ async function sendServiceEventNotification(
       });
   }
   return {
-    actorCount: actorIds.length,
+    actorCount: eligibleActorIds.length,
     deliveredCount,
   };
+}
+
+function shouldSuppressServiceEventNotification(
+  quietHours: Pick<ServiceEventQuietHoursRecord, 'enabled' | 'fromTime' | 'toTime'> | undefined,
+  eventType: ServiceEventType,
+  eventAt: string,
+): boolean {
+  if (!quietHours || !isQuietHoursMutedEventType(eventType)) {
+    return false;
+  }
+  return isQuietHoursActiveAt(quietHours, eventAt);
 }
 
 function isConnectedState(state: BotWebSocketHealth['state']): boolean {

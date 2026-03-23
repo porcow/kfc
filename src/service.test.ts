@@ -375,6 +375,10 @@ test('service returns a task-agnostic help card for authorized users', async () 
   assert.ok(helpJson.includes('/run-status RUN_ID'));
   assert.ok(helpJson.includes('/cancel RUN_ID'));
   assert.ok(helpJson.includes('/reload'));
+  assert.ok(helpJson.includes('/shutup from HH:mm:ss to HH:mm:ss'));
+  assert.ok(helpJson.includes('/shutup status'));
+  assert.ok(helpJson.includes('/shutup on'));
+  assert.ok(helpJson.includes('/shutup off'));
   assert.ok(helpJson.includes('/run sc'));
   assert.ok(!helpJson.includes('`/health`'));
   assert.ok(helpJson.includes('Use `/tasks` to see task-specific example commands.'));
@@ -385,6 +389,80 @@ test('service returns a task-agnostic help card for authorized users', async () 
   assert.ok(JSON.stringify(unsupported.card).includes('Unsupported command'));
 
   await service.close();
+});
+
+test('service supports /shutup set, status, on, and off commands', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-shutup-commands-'));
+  const databasePath = join(directory, 'runs.sqlite');
+  const service = new KidsAlfredService(createBotConfig('alpha', databasePath));
+
+  const setQuietHours = await service.handleMessage('operator-1', '/shutup from 23:00:00 to 07:00:00');
+  const setJson = JSON.stringify(setQuietHours.card);
+  assert.ok(setJson.includes('23:00:00'));
+  assert.ok(setJson.includes('07:00:00'));
+  assert.ok(setJson.includes('on'));
+
+  const status = await service.handleMessage('operator-1', '/shutup status');
+  const statusJson = JSON.stringify(status.card);
+  assert.ok(statusJson.includes('23:00:00'));
+  assert.ok(statusJson.includes('07:00:00'));
+  assert.ok(statusJson.includes('Time zone'));
+  assert.ok(statusJson.includes('system_sleeping'));
+  assert.ok(statusJson.includes('service_online'));
+
+  const off = await service.handleMessage('operator-1', '/shutup off');
+  const offJson = JSON.stringify(off.card);
+  assert.ok(offJson.includes('off'));
+
+  const on = await service.handleMessage('operator-1', '/shutup on');
+  const onJson = JSON.stringify(on.card);
+  assert.ok(onJson.includes('on'));
+
+  await service.close();
+});
+
+test('service validates /shutup commands', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-shutup-validation-'));
+  const databasePath = join(directory, 'runs.sqlite');
+  const service = new KidsAlfredService(createBotConfig('alpha', databasePath));
+
+  const invalidFormat = await service.handleMessage('operator-1', '/shutup from 24:00:00 to 07:00:00');
+  assert.ok(JSON.stringify(invalidFormat.card).includes('HH:mm:ss'));
+
+  const equalRange = await service.handleMessage('operator-1', '/shutup from 22:00:00 to 22:00:00');
+  assert.ok(JSON.stringify(equalRange.card).includes('must differ'));
+
+  const onWithoutConfig = await service.handleMessage('operator-1', '/shutup on');
+  assert.ok(JSON.stringify(onWithoutConfig.card).includes('set a time range first'));
+
+  await service.close();
+});
+
+test('quiet-hours preferences survive allowlist removal and re-add', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kids-alfred-shutup-reconcile-'));
+  const databasePath = join(directory, 'runs.sqlite');
+
+  const initialConfig = createBotConfig('alpha', databasePath);
+  initialConfig.allowedUsers = ['operator-1'];
+  const initialService = new KidsAlfredService(initialConfig, new MemoryRunUpdateSink());
+  await initialService.handleMessage('operator-1', '/shutup from 23:00:00 to 07:00:00');
+  await initialService.close();
+
+  const removedConfig = createBotConfig('alpha', databasePath);
+  removedConfig.allowedUsers = ['operator-2'];
+  const removedService = new KidsAlfredService(removedConfig, new MemoryRunUpdateSink());
+  removedService.reconcileServiceEventSubscriptions();
+  await removedService.close();
+
+  const restoredConfig = createBotConfig('alpha', databasePath);
+  restoredConfig.allowedUsers = ['operator-1'];
+  const restoredService = new KidsAlfredService(restoredConfig, new MemoryRunUpdateSink());
+  const status = await restoredService.handleMessage('operator-1', '/shutup status');
+  const statusJson = JSON.stringify(status.card);
+  assert.ok(statusJson.includes('23:00:00'));
+  assert.ok(statusJson.includes('07:00:00'));
+
+  await restoredService.close();
 });
 
 test('service returns current version for authorized users', async () => {

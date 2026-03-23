@@ -4,6 +4,7 @@ import type {
   CronJobRecord,
   ParameterDefinition,
   RunRecord,
+  ServiceEventQuietHoursRecord,
   ServiceEventType,
   TaskDefinition,
 } from '../domain.ts';
@@ -296,6 +297,18 @@ export function buildHelpCard(
   }
   lines.push(
     '',
+    '`/shutup from HH:mm:ss to HH:mm:ss`',
+    'Save and enable quiet hours for service-event notifications.',
+    '',
+    '`/shutup status`',
+    'Show the current quiet-hours window, enabled state, and host time zone context.',
+    '',
+    '`/shutup on`',
+    'Enable the saved quiet-hours configuration.',
+    '',
+    '`/shutup off`',
+    'Disable the saved quiet-hours configuration without deleting it.',
+    '',
     '`/cron list`',
     'List configured cronjob tasks for this bot.',
     '',
@@ -377,6 +390,44 @@ export function buildVersionCard(version: string): CardResponse {
   return {
     type: 'card',
     card: baseCard('Service version', [buildMarkdown(`Current version: \`${version}\``)]),
+  };
+}
+
+export function buildQuietHoursCard(options: {
+  title: string;
+  quietHours?: ServiceEventQuietHoursRecord;
+  activeNow?: boolean;
+  timeZoneLabel: string;
+}): CardResponse {
+  if (!options.quietHours) {
+    return {
+      type: 'card',
+      card: baseCard(options.title, [
+        buildMarkdown(
+          [
+            'Quiet hours are not configured.',
+            `Time zone: **${options.timeZoneLabel}**`,
+            'Use `/shutup from HH:mm:ss to HH:mm:ss` to save a quiet-hours window.',
+          ].join('\n'),
+        ),
+      ]),
+    };
+  }
+
+  return {
+    type: 'card',
+    card: baseCard(options.title, [
+      buildMarkdown(
+        [
+          `Status: **${options.quietHours.enabled ? 'on' : 'off'}**`,
+          `From: \`${options.quietHours.fromTime}\``,
+          `To: \`${options.quietHours.toTime}\``,
+          `In quiet hours now: **${options.activeNow ? 'true' : 'false'}**`,
+          `Time zone: **${options.timeZoneLabel}**`,
+          'Muted events: `system_sleeping`, `system_woke`, `service_online`, `service_reconnected`',
+        ].join('\n'),
+      ),
+    ]),
   };
 }
 

@@ -256,6 +256,15 @@ export interface ServiceEventSubscriptionRecord {
   updatedAt: string;
 }
 
+export interface ServiceEventQuietHoursRecord {
+  actorId: string;
+  enabled: boolean;
+  fromTime: string;
+  toTime: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ServiceEventStateRecord {
   lastConnectedAt?: string;
   lastHeartbeatSucceededAt?: string;

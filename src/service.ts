@@ -7,6 +7,7 @@ import type {
   PendingConfirmation,
   ReloadResult,
   RunRecord,
+  ServiceEventQuietHoursRecord,
   ServiceEventStateRecord,
   ServiceEventType,
   TaskResult,
@@ -24,11 +25,13 @@ import {
   buildErrorCard,
   buildHealthCard,
   buildHelpCard,
+  buildQuietHoursCard,
   buildRunStatusCard,
   buildTaskListCard,
   buildVersionCard,
 } from './feishu/cards.ts';
 import { isIngressObservationStale } from './health.ts';
+import { getHostTimeZoneLabel, isQuietHoursActiveAt, validateQuietHoursRange } from './quiet-hours.ts';
 import { summarizeParameters, validateParameters } from './config/schema.ts';
 import { createConfirmationId, createRunId } from './utils/ids.ts';
 import { RunRepository } from './persistence/run-repository.ts';
@@ -198,6 +201,38 @@ function parseInlineScriptCommand(command: string, prefix: '/shell' | '/osascrip
   return script;
 }
 
+type QuietHoursCommand =
+  | { kind: 'status' }
+  | { kind: 'on' }
+  | { kind: 'off' }
+  | { kind: 'set'; fromTime: string; toTime: string };
+
+function parseQuietHoursCommand(command: string): QuietHoursCommand {
+  if (command === '/shutup status') {
+    return { kind: 'status' };
+  }
+  if (command === '/shutup on') {
+    return { kind: 'on' };
+  }
+  if (command === '/shutup off') {
+    return { kind: 'off' };
+  }
+
+  const match = command.match(/^\/shutup from (\S+) to (\S+)$/u);
+  if (!match) {
+    throw new Error(
+      'Usage: /shutup from HH:mm:ss to HH:mm:ss, /shutup status, /shutup on, or /shutup off',
+    );
+  }
+
+  const { fromTime, toTime } = validateQuietHoursRange(match[1], match[2]);
+  return {
+    kind: 'set',
+    fromTime,
+    toTime,
+  };
+}
+
 export class KidsAlfredService {
   private readonly botId: string;
   private readonly updates: MultiRunUpdateSink;
@@ -363,7 +398,7 @@ export class KidsAlfredService {
 
   private buildUnsupportedCommandMessage(): string {
     const runExample = this.hasScreencaptureTask() ? ' (for example `/run sc`)' : '';
-    return `Unsupported command. Use /help, /server health, /server version, /tasks, /run TASK_ID key=value ...${runExample}, /server update, /server rollback, /shell {script}, /osascript {script}, /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.`;
+    return `Unsupported command. Use /help, /server health, /server version, /tasks, /run TASK_ID key=value ...${runExample}, /server update, /server rollback, /shell {script}, /osascript {script}, /shutup from HH:mm:ss to HH:mm:ss, /shutup status, /shutup on, /shutup off, /cron list, /cron start TASK_ID, /cron stop TASK_ID, /cron status, /run-status RUN_ID, /cancel RUN_ID, or /reload.`;
   }
 
   async listCronTasks(
@@ -666,6 +701,17 @@ export class KidsAlfredService {
         });
         return response;
       }
+      if (trimmed.startsWith('/shutup')) {
+        const response = this.handleQuietHoursCommand(actorId, parseQuietHoursCommand(trimmed));
+        await this.logEvent({
+          actorId,
+          chatId: context.chatId,
+          eventType: 'im.message.receive_v1',
+          commandType: 'shutup',
+          decision: 'status_returned',
+        });
+        return response;
+      }
       if (trimmed.startsWith('/run ')) {
         const { taskId, parameters } = parseRunCommand(trimmed.replace('/run ', '').trim());
         if (taskId === 'update' || taskId === 'rollback') {
@@ -895,6 +941,10 @@ export class KidsAlfredService {
       .map((record) => record.actorId);
   }
 
+  getServiceEventQuietHours(actorId: string): ServiceEventQuietHoursRecord | undefined {
+    return this.repository.getServiceEventQuietHours(actorId);
+  }
+
   getServiceEventState(): ServiceEventStateRecord | undefined {
     return this.repository.getServiceEventState();
   }
@@ -1008,6 +1058,9 @@ export class KidsAlfredService {
     if (text.startsWith('/osascript')) {
       return 'osascript';
     }
+    if (text.startsWith('/shutup')) {
+      return 'shutup';
+    }
     if (text === '/tasks') {
       return 'tasks';
     }
@@ -1089,6 +1142,44 @@ export class KidsAlfredService {
       originChatId: context.chatId,
     });
     return buildConfirmationCard(task, parameters, confirmationId);
+  }
+
+  private handleQuietHoursCommand(actorId: string, command: QuietHoursCommand): CardResponse {
+    this.ensureAuthorized(actorId);
+    if (command.kind === 'status') {
+      return this.renderQuietHoursCard('Quiet hours', this.repository.getServiceEventQuietHours(actorId));
+    }
+    if (command.kind === 'set') {
+      const quietHours = this.repository.upsertServiceEventQuietHours(
+        actorId,
+        command.fromTime,
+        command.toTime,
+        true,
+      );
+      return this.renderQuietHoursCard('Quiet hours updated', quietHours);
+    }
+
+    const quietHours = this.repository.setServiceEventQuietHoursEnabled(actorId, command.kind === 'on');
+    if (!quietHours) {
+      throw new Error('No quiet hours configured; set a time range first');
+    }
+
+    return this.renderQuietHoursCard(
+      command.kind === 'on' ? 'Quiet hours enabled' : 'Quiet hours disabled',
+      quietHours,
+    );
+  }
+
+  private renderQuietHoursCard(
+    title: string,
+    quietHours?: ServiceEventQuietHoursRecord,
+  ): CardResponse {
+    return buildQuietHoursCard({
+      title,
+      quietHours,
+      activeNow: quietHours ? isQuietHoursActiveAt(quietHours, new Date().toISOString()) : false,
+      timeZoneLabel: getHostTimeZoneLabel(),
+    });
   }
 
   private resolveCardActionActorId(

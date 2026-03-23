@@ -35,31 +35,36 @@
 12. Confirm `service_online` remains available as a diagnostic event and is emitted only once after the bot first reaches `connected` in the current main-service process session.
 13. Confirm `service_reconnected` is not emitted for short reconnect churn, and is emitted only after a successful availability evaluation occurs following a gap greater than the configured threshold when that diagnostic subscription is explicitly enabled.
 14. Confirm a bot that has already been running long enough to establish a successful-heartbeat baseline can sleep or disconnect past the threshold, recover availability, and emit `service_reconnected` shortly after recovery rather than waiting for the next 60-second timer boundary when diagnostic reconnect notifications are enabled.
-15. Send `/tasks` from an allowed Feishu user in bot A and confirm bot A's one-shot task list card arrives.
-16. Send `/tasks` from an allowed Feishu user in bot B and confirm bot B's task list is different if configured differently.
-17. For a bot that explicitly configures task `sc`, send `/run sc` from an allowed Feishu user and confirm:
+15. Send `/shutup from 23:00:00 to 07:00:00` from an allowed Feishu user and confirm the response shows the saved start time, end time, enabled state, and the bot host's local time zone context.
+16. Send `/shutup status` and confirm it reports the current enabled state, saved time range, whether the current host-local time is inside the quiet-hours window, and the muted event set `system_sleeping`, `system_woke`, `service_online`, and `service_reconnected`.
+17. Send `/shutup off`, confirm `/shutup status` reports the same saved time range with quiet hours disabled, then send `/shutup on` and confirm the saved time range is re-enabled without being reset.
+18. Send invalid quiet-hours commands such as `/shutup from 24:00:00 to 07:00:00`, `/shutup from 22:00:00 to 22:00:00`, and `/shutup on` before any time range is configured, and confirm each returns clear validation feedback.
+19. With quiet hours enabled for a window covering the current host-local time, confirm `system_sleeping`, `system_woke`, `service_online`, and `service_reconnected` are suppressed for that user while the underlying service-event subscription rows remain unchanged.
+20. Send `/tasks` from an allowed Feishu user in bot A and confirm bot A's one-shot task list card arrives.
+21. Send `/tasks` from an allowed Feishu user in bot B and confirm bot B's task list is different if configured differently.
+22. For a bot that explicitly configures task `sc`, send `/run sc` from an allowed Feishu user and confirm:
    - the bot returns the normal confirmation card rather than using a dedicated `/sc` shortcut
    - confirming the request captures the current screen and sends the screenshot image back to the same chat
    - the temporary screenshot file under `~/.kfc/data/screenshot-YYYYMMDD-HHmmss.png` is deleted after successful image delivery
    - if Feishu image upload or send fails, the run surfaces a clear failure and the screenshot file remains on disk for debugging
-18. For a bot that explicitly configures task `shell`, send `/shell echo "hello world"` and confirm:
+23. For a bot that explicitly configures task `shell`, send `/shell echo "hello world"` and confirm:
    - the bot returns the normal one-shot confirmation card with a bounded preview of the submitted script body
    - confirming the request executes the shell script locally through a temporary materialized script file
    - the resulting run remains queryable through `/run-status RUN_ID`
    - an empty `/shell` submission is rejected before confirmation with a clear `script content is required` style error
-19. For a bot that explicitly configures task `osascript`, send `/osascript display notification "Hello World" with title "Test"` and confirm:
+24. For a bot that explicitly configures task `osascript`, send `/osascript display notification "Hello World" with title "Test"` and confirm:
    - the bot returns the normal one-shot confirmation card with a bounded preview of the submitted AppleScript body
    - confirming the request executes the AppleScript locally through `osascript` using a temporary materialized script file
    - the resulting run remains queryable through `/run-status RUN_ID`
    - an empty `/osascript` submission is rejected before confirmation with a clear `script content is required` style error
-18. For a bot that explicitly configures task `update`, send `/server update` and confirm:
+25. For a bot that explicitly configures task `update`, send `/server update` and confirm:
    - the bot returns the normal one-shot confirmation card
    - if the latest stable GitHub Release matches the local install metadata, the confirmed run succeeds with an `already latest` style summary
    - if a newer stable release is available, the confirmed run enters `running`, hands the refresh phase off to a detached helper, and the terminal summary arrives after service restart
    - confirm the detached helper does not disappear when the old `com.kidsalfred.service` job is booted out
    - if service refresh fails after swap but automatic rollback succeeds, the run fails with a summary that explicitly says the update failed and the service was restored to the previous version
    - if update and automatic rollback both fail, the run fails with a summary that explicitly says manual recovery is required
-19. For a bot that explicitly configures task `rollback`, send `/server rollback` and confirm:
+26. For a bot that explicitly configures task `rollback`, send `/server rollback` and confirm:
    - the bot returns the normal one-shot confirmation card
    - if `app.previous` and matching install metadata are present, the confirmed run hands the refresh phase off to a detached helper and reports the restored current version after service restart
    - if no rollback target exists, the run fails with `no rollback version is available`

@@ -888,6 +888,64 @@ test('pending wake notification is deferred until availability is restored', asy
   assert.equal(powerState.pendingWakeNotification, undefined);
 });
 
+test('pending wake notification is suppressed during quiet hours using wake event time', async () => {
+  const deliveries: any[] = [];
+  const service = {
+    getBotId() {
+      return 'alpha';
+    },
+    getConfig() {
+      return {
+        loadedAt: '2026-03-19T09:55:00.000Z',
+      };
+    },
+    listServiceEventSubscriberActorIds(eventType: ServiceEventType) {
+      return eventType === 'system_woke' ? ['ou_a'] : [];
+    },
+    getServiceEventQuietHours(actorId: string) {
+      return actorId === 'ou_a'
+        ? {
+            actorId,
+            enabled: true,
+            fromTime: '23:00:00',
+            toTime: '07:00:00',
+          }
+        : undefined;
+    },
+    getWebSocketObservationHealth() {
+      return undefined;
+    },
+  };
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async create(request: any) {
+            deliveries.push(request);
+          },
+        },
+      },
+    },
+  };
+
+  let powerState = recordPowerEvent({}, 'sleep', '2026-03-19T23:30:00.000Z');
+  powerState = recordPowerEvent(powerState, 'wake', '2026-03-20T06:30:00.000Z');
+  powerState = await processPendingWakeNotification(
+    service as any,
+    client as any,
+    '2026-03-20T08:00:00.000Z',
+    {
+      state: 'connected',
+      consecutiveReconnectFailures: 0,
+      lastConnectedAt: '2026-03-20T08:00:00.000Z',
+    } as any,
+    powerState,
+  );
+
+  assert.equal(deliveries.length, 0);
+  assert.equal(powerState.pendingWakeNotification, undefined);
+});
+
 test('service connection transition emits a session-scoped online notification to allowlist subscribers', async () => {
   const deliveries: any[] = [];
   const serviceState: any = {};
@@ -975,6 +1033,82 @@ test('service connection transition emits a session-scoped online notification t
   assert.equal(deliveries[0].data.receive_id, 'ou_a');
   assert.equal(deliveries[1].data.receive_id, 'ou_b');
   assert.ok(deliveries[0].data.content.includes('Bot 已上线'));
+});
+
+test('service connection transition suppresses service_online during quiet hours', async () => {
+  const deliveries: any[] = [];
+  const serviceState: any = {};
+  const service = {
+    getBotId() {
+      return 'alpha';
+    },
+    getConfig() {
+      return {
+        loadedAt: '2026-03-15T01:00:00.000Z',
+      };
+    },
+    getServiceReconnectNotificationThresholdMs() {
+      return 3600000;
+    },
+    listServiceEventSubscriberActorIds(eventType: ServiceEventType) {
+      return eventType === 'service_online' ? ['ou_a'] : [];
+    },
+    getServiceEventQuietHours(actorId: string) {
+      return actorId === 'ou_a'
+        ? {
+            actorId,
+            enabled: true,
+            fromTime: '23:00:00',
+            toTime: '07:00:00',
+          }
+        : undefined;
+    },
+    getServiceEventState() {
+      return Object.keys(serviceState).length > 0 ? serviceState : undefined;
+    },
+    saveServiceEventState(update: any) {
+      for (const [key, value] of Object.entries(update)) {
+        if (value === null) {
+          delete serviceState[key];
+        } else {
+          serviceState[key] = value;
+        }
+      }
+      serviceState.updatedAt = '2026-03-15T06:30:00.000Z';
+      return { ...serviceState };
+    },
+  };
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async create(request: any) {
+            deliveries.push(request);
+          },
+        },
+      },
+    },
+  };
+
+  const onlineNotificationSent = await processServiceConnectionTransition(
+    service as any,
+    client as any,
+    {
+      state: 'connecting',
+      consecutiveReconnectFailures: 0,
+    },
+    {
+      state: 'connected',
+      consecutiveReconnectFailures: 0,
+      lastConnectedAt: '2026-03-15T06:30:00.000Z',
+    },
+    '2026-03-15T06:30:00.000Z',
+    false,
+  );
+
+  assert.equal(onlineNotificationSent, true);
+  assert.equal(deliveries.length, 0);
+  assert.equal(serviceState.lastConnectedAt, '2026-03-15T06:30:00.000Z');
 });
 
 test('service heartbeat uses a 1 hour default threshold for reconnect notifications', async () => {
@@ -1070,6 +1204,86 @@ test('service heartbeat uses a 1 hour default threshold for reconnect notificati
   assert.ok(deliveries[0].data.content.includes('1小时10分'));
   assert.equal(serviceState.lastHeartbeatSucceededAt, '2026-03-15T02:10:00.000Z');
   assert.equal(serviceState.lastReconnectedNotifiedAt, '2026-03-15T02:10:00.000Z');
+});
+
+test('service heartbeat suppresses reconnect notifications during quiet hours', async () => {
+  const deliveries: any[] = [];
+  const serviceState: any = {};
+  const service = {
+    getBotId() {
+      return 'alpha';
+    },
+    getConfig() {
+      return {
+        loadedAt: '2026-03-15T00:55:00.000Z',
+      };
+    },
+    getServiceReconnectNotificationThresholdMs() {
+      return 3600000;
+    },
+    listServiceEventSubscriberActorIds(eventType: ServiceEventType) {
+      return eventType === 'service_reconnected' ? ['ou_a'] : [];
+    },
+    getServiceEventQuietHours(actorId: string) {
+      return actorId === 'ou_a'
+        ? {
+            actorId,
+            enabled: true,
+            fromTime: '23:00:00',
+            toTime: '07:00:00',
+          }
+        : undefined;
+    },
+    getServiceEventState() {
+      return { ...serviceState };
+    },
+    saveServiceEventState(update: any) {
+      for (const [key, value] of Object.entries(update)) {
+        if (value === null) {
+          delete serviceState[key];
+        } else {
+          serviceState[key] = value;
+        }
+      }
+      serviceState.updatedAt = '2026-03-15T06:30:00.000Z';
+      return { ...serviceState };
+    },
+  };
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async create(request: any) {
+            deliveries.push(request);
+          },
+        },
+      },
+    },
+  };
+
+  await processServiceHeartbeat(
+    service as any,
+    client as any,
+    '2026-03-15T01:00:00.000Z',
+    {
+      state: 'connected',
+      consecutiveReconnectFailures: 0,
+    } as any,
+  );
+  await processServiceHeartbeat(
+    service as any,
+    client as any,
+    '2026-03-15T06:30:00.000Z',
+    {
+      state: 'connected',
+      consecutiveReconnectFailures: 0,
+      lastConnectedAt: '2026-03-15T06:30:00.000Z',
+    } as any,
+  );
+
+  assert.equal(deliveries.length, 0);
+  assert.equal(serviceState.lastHeartbeatSucceededAt, '2026-03-15T06:30:00.000Z');
+  assert.equal(serviceState.lastReconnectedNotifiedAt, '2026-03-15T06:30:00.000Z');
 });
 
 test('service heartbeat respects explicit global reconnect threshold overrides', async () => {
